@@ -7,6 +7,7 @@ watch: [src]
 nav:
   - Home: index.md
   - Bundle Spec: spec.md
+  - Bundle Player: player.md
   - API:
     - multireel: api/multireel.md
     - multireel.render: api/render.md
@@ -58,6 +59,7 @@ plugins:
       "Multireel":
       - index.md: Project overview and installation
       - spec.md: Bundle file format spec
+      - player.md: Web player for watching bundles in a browser
       "Development":
       - api/multireel.md: Core API for writing bundles, and the bundle format types
       - api/render.md: Rendering arrays into RGB frames

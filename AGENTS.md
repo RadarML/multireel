@@ -8,6 +8,7 @@ Multireel is a multimodal rendering framework for video editing. The project is 
 - `tests/`: pytest tests (`test_*.py`).
 - `docs/`: [zensical](https://zensical.org) site (configured via `mkdocs.yml`); the API reference is generated from docstrings via mkdocstrings (`docs/api/`, one page for the top-level API and one per public submodule). Add new pages to `nav` in `mkdocs.yml`.
 - `docs/spec.md`: the bundle format spec (video format, time model, manifest). Code that reads or writes bundles must follow it.
+- `player/`: a web player for bundles (`server.py`, a Flask app, and `index.html`, a single page with inline JS/CSS). It is an app outside the package: it imports only the public API, and its Flask dependency is in the `player` extra. Tests are in `tests/test_player.py`.
 
 ## Architecture
 
@@ -47,11 +48,12 @@ The library is Linux-only, since streams are written in forked processes. Encodi
 uv sync --all-extras                         # Install, including dev + docs extras
 uv run pre-commit install                    # ruff + pyright + pytest on every commit
 uv run pre-commit run --all-files            # Run all hooks manually
-uv run --extra dev ruff check src tests      # Lint
-uv run --extra dev pyright src tests         # Type check
+uv run --extra dev ruff check src tests player  # Lint
+uv run --extra dev pyright src tests player     # Type check
 uv run --extra dev pytest -ra -- tests       # Test
 uv run --extra docs zensical serve           # Serve docs locally
 uv run --extra docs zensical build --strict  # Build docs as CI does
+uv run --extra player python player/server.py <folder>  # Run the player
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff, pyright and pytest on pushes and PRs to `main`; `.github/workflows/docs.yml` builds and deploys the docs to GitHub Pages on pushes to `main`.

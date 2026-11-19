@@ -31,11 +31,11 @@ jobs:
 
     - name: Lint with ruff
       run: |
-        uv run --extra dev ruff check ./src ./tests
+        uv run --extra dev ruff check ./src ./tests ./player
 
     - name: Type check with pyright
       run: |
-        uv run --extra dev pyright ./src ./tests
+        uv run --extra dev pyright ./src ./tests ./player
 
     - name: Run tests
       run: |

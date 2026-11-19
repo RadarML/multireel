@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multireel Player</title>
+<style>
+  :root {
+    --bg: #111316;
+    --panel: #1a1d22;
+    --panel-2: #23272e;
+    --border: #2e333b;
+    --text: #e3e6ea;
+    --muted: #8b939e;
+    --accent: #2bb3a3;
+    --warn: #e0a43a;
+    --error: #e06a5a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid; grid-template-columns: 280px 1fr; overflow: hidden;
+  }
+  button, select, input { font: inherit; color: inherit; }
+
+  /* Sidebar */
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  aside h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 16px 16px 6px;
+  }
+  #bundles { overflow-y: auto; flex: 1 1 50%; min-height: 80px; }
+  .bundle {
+    padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent;
+  }
+  .bundle:hover { background: var(--panel-2); }
+  .bundle.active { border-left-color: var(--accent); background: var(--panel-2); }
+  .bundle .name { font-weight: 600; word-break: break-all; }
+  .bundle .meta { color: var(--muted); font-size: 12px; }
+  .bundle.broken { cursor: default; opacity: .6; }
+  .bundle.broken .meta { color: var(--error); }
+  #streams { overflow-y: auto; flex: 1 1 50%; padding: 0 16px 8px; }
+  #streams label { display: flex; gap: 8px; padding: 3px 0; cursor: pointer; }
+  #streams label.overlay { padding-left: 22px; }
+  #streams label[draggable="true"] { cursor: grab; }
+  #streams label.drop-target {
+    box-shadow: inset 0 0 0 1px var(--accent); border-radius: 4px;
+  }
+  #streams .profile { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .empty { color: var(--muted); padding: 8px 16px; }
+
+  /* Main */
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #banner {
+    display: none; background: #3a2e15; color: var(--warn);
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+  }
+  /* Tiles are placed by `layout()`, so the grid is only a positioned box. */
+  #grid {
+    flex: 1; min-height: 0; position: relative;
+    overflow-x: hidden; overflow-y: auto;
+  }
+  #placeholder {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted);
+  }
+  .tile {
+    position: absolute; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; overflow: hidden;
+    transition: left .2s, top .2s, width .2s, height .2s, opacity .2s;
+  }
+  #grid.instant .tile { transition: none; }
+  .tile.hidden { display: none; }
+  .tile.dragging { opacity: .4; }
+  .tile.drop-target { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tile header {
+    flex: none; height: 30px; display: flex; gap: 8px; align-items: center;
+    padding: 0 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; overflow: hidden; cursor: grab;
+  }
+  .tile header .label { font-weight: 600; }
+  .tile header .id { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .tile header .note { color: var(--error); font-size: 12px; margin-left: auto; }
+  .tile .body { flex: 1; min-height: 0; position: relative; background: #000; }
+  .tile video {
+    display: block; width: 100%; height: 100%; object-fit: contain;
+  }
+  .tile video.overlay { position: absolute; inset: 0; pointer-events: none; }
+  .tile video.hidden { display: none; }
+  .tile .error {
+    padding: 16px; color: var(--error); text-align: center; height: 100%;
+    display: none; flex-direction: column; gap: 12px;
+    align-items: center; justify-content: center; overflow: auto;
+  }
+  .tile .body.failed > video:not(.overlay) { display: none; }
+  .tile .body.failed .error { display: flex; }
+  .tile .error button {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 14px; cursor: pointer;
+  }
+  .tile .error button:hover { border-color: var(--accent); }
+
+  /* Transport */
+  #transport {
+    background: var(--panel); border-top: 1px solid var(--border);
+    padding: 8px 12px 10px;
+  }
+  #scrub { width: 100%; accent-color: var(--accent); margin: 0 0 6px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controls button, .controls select {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 10px; cursor: pointer;
+  }
+  .controls button:hover { border-color: var(--accent); }
+  #play { min-width: 72px; }
+  .readout { font-family: var(--mono); display: flex; gap: 16px; margin-left: 8px; }
+  .readout .tc { font-size: 16px; }
+  .readout span.dim { color: var(--muted); }
+  .hint { color: var(--muted); font-size: 12px; margin-left: auto; }
+  #transport.disabled { opacity: .5; pointer-events: none; }
+
+  @media (max-width: 720px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; overflow: auto; }
+    aside { max-height: 40vh; }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <h2>Bundles</h2>
+  <div id="bundles"><div class="empty">Loading...</div></div>
+  <h2>Streams</h2>
+  <div id="streams"><div class="empty">No bundle selected.</div></div>
+</aside>
+<main>
+  <div id="banner"></div>
+  <div id="placeholder">Select a bundle to play.</div>
+  <div id="grid" hidden></div>
+  <div id="transport" class="disabled">
+    <input id="scrub" type="range" min="0" max="0" value="0">
+    <div class="controls">
+      <button id="back" title="Back 1 frame (Left)">&#9664;|</button>
+      <button id="play" title="Play / pause (Space)">Play</button>
+      <button id="fwd" title="Forward 1 frame (Right)">|&#9654;</button>
+      <select id="rate" title="Playback rate">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+      </select>
+      <div class="readout">
+        <span class="tc" id="timecode">--:--:--:--</span>
+        <span id="frame-readout" class="dim"></span>
+        <span id="utc" class="dim"></span>
+      </div>
+      <span class="hint">Space: play &middot; Left/Right: frame &middot; Shift: 1 s</span>
+    </div>
+  </div>
+</main>
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+// Current bundle; `null` until one is loaded.
+let bundle = null;
+// Shared position, as a frame index into the bundle.
+let frame = 0;
+let playing = false;
+let buffering = false;
+let draggingScrub = false;
+
+// Frame `k` is shown from `k / rate` to `(k + 1) / rate`; seeking to the
+// middle of that interval avoids landing on the boundary between frames.
+const frameToTime = (k) => (k + 0.5) / bundle.edit_rate;
+const timeToFrame = (t) => clampFrame(Math.floor(t * bundle.edit_rate));
+// Encodes each segment of a bundle path for use in a URL.
+const encodePath = (path) => path.split("/").map(encodeURIComponent).join("/");
+const clampFrame = (k) => Math.max(0, Math.min(bundle.frame_count - 1, k));
+
+function profileName(profile) {
+  if (typeof profile === "string") return profile;
+  const level = profile.level ? ` ${profile.level}` : "";
+  return `${profile.codec} ${profile.chroma} ${profile.bit_depth}-bit${level}`
+    + (profile.alpha ? " alpha" : "");
+}
+
+function formatDuration(seconds) {
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const pad = (x) => String(x).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+}
+
+// Same arithmetic as `multireel.Timecode.from_frame`.
+function timecode(k) {
+  const rate = bundle.edit_rate;
+  const absolute = bundle.start_frame + k;
+  const offset = absolute - bundle.origin_seconds * rate + 3600 * rate;
+  if (offset < 0 || offset >= 24 * 3600 * rate) return "--:--:--:--";
+  const pad = (x) => String(x).padStart(2, "0");
+  const frames = offset % rate;
+  const total = Math.floor(offset / rate);
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}`
+    + `:${pad(total % 60)}:${pad(frames)}`;
+}
+
+function utcTime(k) {
+  const ms = (bundle.start_frame + k) / bundle.edit_rate * 1000;
+  return new Date(ms).toISOString().replace("T", " ").replace("Z", " UTC");
+}
+
+/* ------------------------------------------------------------------ */
+/* Bundle list and URL state                                           */
+
+function parseHash() {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  const [path, query] = hash.split("?");
+  const f = new URLSearchParams(query || "").get("f");
+  return { path: path || null, frame: f === null ? 0 : parseInt(f, 10) || 0 };
+}
+
+function writeHash() {
+  if (!bundle) return;
+  history.replaceState(null, "", `#${encodeURI(bundle.path)}?f=${frame}`);
+}
+
+async function loadBundleList() {
+  const list = $("bundles");
+  let entries;
+  try {
+    entries = await (await fetch("api/bundles")).json();
+  } catch (e) {
+    list.innerHTML = `<div class="empty">Could not load bundles: ${e}</div>`;
+    return [];
+  }
+  list.innerHTML = "";
+  if (entries.length === 0) {
+    list.innerHTML = '<div class="empty">No bundles found.</div>';
+  }
+  for (const entry of entries) {
+    const el = document.createElement("div");
+    el.className = "bundle";
+    el.dataset.path = entry.path;
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = entry.path;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    if (entry.error) {
+      el.classList.add("broken");
+      meta.textContent = entry.error;
+    } else {
+      const duration = formatDuration(entry.frame_count / entry.edit_rate);
+      meta.textContent = `${entry.recording_id} · ${duration} `
+        + `· ${entry.edit_rate} fps · ${entry.n_streams} streams`;
+      el.addEventListener("click", () => openBundle(entry.path, 0));
+    }
+    el.append(name, meta);
+    list.append(el);
+  }
+  return entries;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tiles                                                               */
+
+function unloadBundle() {
+  if (!bundle) return;
+  for (const s of bundle.streams) {
+    s.video.pause();
+    s.video.removeAttribute("src");
+    s.video.load();
+  }
+  bundle = null;
+  playing = false;
+  $("grid").innerHTML = "";
+}
+
+async function openBundle(path, startFrame) {
+  pause();
+  unloadBundle();
+  for (const el of document.querySelectorAll(".bundle")) {
+    el.classList.toggle("active", el.dataset.path === path);
+  }
+
+  let manifest;
+  try {
+    const response = await fetch(`api/manifest/${encodePath(path)}`);
+    if (!response.ok) throw new Error(response.statusText);
+    manifest = await response.json();
+  } catch (e) {
+    $("placeholder").textContent = `Could not load ${path}: ${e.message}`;
+    return;
+  }
+
+  bundle = {
+    ...manifest, path,
+    origin_seconds: Date.parse(manifest.timecode_origin) / 1000,
+  };
+  for (const s of bundle.streams) {
+    s.visible = true;
+    s.ok = true;
+    s.aspect = 16 / 9;  // Until the video's metadata loads.
+  }
+  buildTiles();
+  bundle.order = loadOrder(bundle.streams
+    .filter((s) => !s.video.classList.contains("overlay")).map((s) => s.id));
+  buildStreamList();
+  showCodecBanner();
+
+  $("placeholder").hidden = true;
+  $("grid").hidden = false;
+  layout(false);
+  $("transport").classList.remove("disabled");
+  $("scrub").max = bundle.frame_count - 1;
+  seekAll(clampFrame(startFrame));
+}
+
+function buildTiles() {
+  const grid = $("grid");
+  const byId = new Map(bundle.streams.map((s) => [s.id, s]));
+  bundle.byId = byId;
+  for (const s of bundle.streams) {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.src = `stream/${encodePath(bundle.path)}/${s.id}`;
+    video.addEventListener("error", () => onVideoError(s));
+    video.addEventListener("seeked", () => onSeeked(s));
+    video.addEventListener("loadedmetadata", () => {
+      s.loaded = true;
+      const aspect = video.videoWidth / video.videoHeight;
+      if (aspect > 0 && aspect !== s.aspect) {
+        s.aspect = aspect;
+        layout(false);
+      }
+      if (s.reloading) {
+        s.reloading = false;
+        s.note.textContent = "";
+      }
+      seekVideo(s, frameToTime(frame));
+    });
+    s.video = video;
+    s.pending = null;
+    s.loaded = false;
+    s.reloading = false;
+    s.failures = [];
+
+    if (s.overlay_of && byId.has(s.overlay_of)) {
+      video.className = "overlay";
+      continue;  // Attached to its base tile below.
+    }
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    const header = document.createElement("header");
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = s.label || s.id;
+    const id = document.createElement("span");
+    id.className = "id";
+    id.textContent = s.label ? s.id : "";
+    const note = document.createElement("span");
+    note.className = "note";
+    header.append(label, id, note);
+    header.title = "Drag to reorder";
+    makeDraggable(header, s);
+    makeDropTarget(tile, s);
+    const error = document.createElement("div");
+    error.className = "error";
+    const errorText = document.createElement("span");
+    const retryButton = document.createElement("button");
+    retryButton.textContent = "Retry";
+    retryButton.addEventListener("click", (e) => {
+      e.stopPropagation();  // Don't toggle playback.
+      retry(s);
+    });
+    error.append(errorText, retryButton);
+    const body = document.createElement("div");
+    body.className = "body";
+    body.append(video, error);
+    body.addEventListener("click", togglePlay);
+    tile.append(header, body);
+    grid.append(tile);
+    s.tile = tile;
+    s.body = body;
+    s.note = note;
+    s.errorText = errorText;
+    s.retryButton = retryButton;
+  }
+  for (const s of bundle.streams) {
+    if (!s.tile) {
+      const base = byId.get(s.overlay_of);
+      base.body.append(s.video);
+      s.tile = base.tile;
+      s.note = base.note;
+    }
+  }
+}
+
+function buildStreamList() {
+  const list = $("streams");
+  list.innerHTML = "";
+  const ordered = [];
+  for (const s of bundle.order.map((id) => bundle.byId.get(id))) {
+    ordered.push(s);
+    ordered.push(...bundle.streams.filter((o) => o.overlay_of === s.id
+      && o.video.classList.contains("overlay")));
+  }
+  for (const s of ordered) {
+    const label = document.createElement("label");
+    if (s.video.classList.contains("overlay")) {
+      label.className = "overlay";
+    } else {
+      makeDraggable(label, s);
+      makeDropTarget(label, s);
+    }
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = s.visible;
+    box.addEventListener("change", () => {
+      setVisible(s, box.checked);
+      box.blur();  // Keep Space for play/pause.
+    });
+    const name = document.createElement("span");
+    name.textContent = s.label || s.id;
+    const profile = document.createElement("span");
+    profile.className = "profile";
+    profile.textContent = profileName(s.profile);
+    label.append(box, name, profile);
+    list.append(label);
+  }
+}
+
+function showCodecBanner() {
+  const banner = $("banner");
+  const hevc = bundle.streams.some((s) => s.codec === "hevc");
+  const canHevc = document.createElement("video")
+    .canPlayType('video/mp4; codecs="hvc1.2.4.L153.B0"');
+  if (hevc && !canHevc) {
+    banner.textContent = "This browser reports no HEVC Main10 support, so "
+      + "HEVC streams may not play. Try Safari, or Chrome/Edge with "
+      + "hardware HEVC decoding.";
+    banner.style.display = "block";
+  } else {
+    banner.style.display = "none";
+  }
+}
+
+const MEDIA_ERRORS = {
+  1: "aborted", 2: "network error", 3: "decode error",
+  4: "source not supported",
+};
+const MAX_RELOADS = 3;
+const RELOAD_WINDOW_MS = 30000;
+
+function onVideoError(s) {
+  const error = s.video.error;
+  const code = error ? error.code : 0;
+  const detail = (MEDIA_ERRORS[code] || "unknown error")
+    + (error && error.message ? ` (${error.message})` : "");
+  console.warn(`Stream ${s.id}: ${detail}`);
+
+  if (!s.loaded && code === 4) {
+    const hint = s.codec === "prores"
+      ? "ProRes plays in Safari on macOS."
+      : "HEVC plays in Safari, and in Chrome/Edge with hardware decoding.";
+    fail(s, `Can't decode ${profileName(s.profile)} in this browser. `
+      + hint, false);
+    return;
+  }
+  // Errors in a stream that already played, such as a dropped range request
+  // or a decoder error while seeking quickly, usually clear on a reload.
+  const now = performance.now();
+  s.failures = s.failures.filter((t) => now - t < RELOAD_WINDOW_MS);
+  s.failures.push(now);
+  if (s.failures.length > MAX_RELOADS) {
+    fail(s, `Stream stopped: ${detail}`, true);
+    return;
+  }
+  s.note.textContent = `${s.label || s.id}: reloading after ${detail}`;
+  reload(s);
+}
+
+// Reloads a video from the server; it seeks back to the shared frame on
+// `loadedmetadata`, and playback waits for it like any buffering stream.
+function reload(s) {
+  s.reloading = true;
+  s.pending = null;
+  s.video.load();
+}
+
+function fail(s, message, retryable) {
+  s.ok = false;
+  s.retryable = retryable;
+  s.video.pause();
+  if (s.video.classList.contains("overlay")) {
+    s.video.classList.add("hidden");
+    s.note.textContent = `Overlay ${s.label || s.id}: ${message}`
+      + (retryable ? " Toggle it off and on to retry." : "");
+    return;
+  }
+  s.body.classList.add("failed");
+  s.errorText.textContent = message;
+  s.retryButton.hidden = !retryable;
+}
+
+function retry(s) {
+  s.ok = true;
+  s.failures = [];
+  s.note.textContent = "";
+  if (s.video.classList.contains("overlay")) {
+    s.video.classList.toggle("hidden", !s.visible);
+  } else {
+    s.body.classList.remove("failed");
+  }
+  reload(s);
+}
+
+function setVisible(s, visible) {
+  s.visible = visible;
+  const target = s.video.classList.contains("overlay") ? s.video : s.tile;
+  target.classList.toggle("hidden", !visible);
+  if (target === s.tile) layout(true);
+  if (!visible) {
+    s.video.pause();
+    return;
+  }
+  if (!s.ok) {
+    if (s.retryable) retry(s);
+    else if (target === s.video) s.video.classList.add("hidden");
+    return;
+  }
+  // Overlays of a hidden base stay hidden with their tile.
+  seekVideo(s, frameToTime(frame));
+  if (playing) {
+    s.video.playbackRate = rate();
+    s.video.play().catch(() => {});
+  }
+}
+
+// Streams that are shown and haven't failed.
+function active() {
+  if (!bundle) return [];
+  return bundle.streams.filter((s) => s.ok && s.visible
+    && !s.tile.classList.contains("hidden"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout                                                              */
+
+const PAD = 10;            // Space around the tiles, in px.
+const GAP = 10;            // Space between tiles, in px.
+const HEADER = 30;         // Tile header height, in px; matches the CSS.
+const BORDER = 1;          // Tile border width, in px; matches the CSS.
+const MIN_VIDEO_H = 120;   // Below this, tiles fill the width and scroll.
+const MAX_EXHAUSTIVE = 12; // Most tiles for which every split is tried.
+
+// Yields ways to split `n` tiles, in order, into rows, as row sizes.
+function* rowSplits(n) {
+  if (n <= MAX_EXHAUSTIVE) {
+    for (let mask = 0; mask < (1 << (n - 1)); mask++) {
+      const sizes = [];
+      let size = 1;
+      for (let i = 0; i < n - 1; i++) {
+        if (mask & (1 << i)) { sizes.push(size); size = 1; } else size++;
+      }
+      sizes.push(size);
+      yield sizes;
+    }
+  } else {
+    for (let rows = 1; rows <= n; rows++) yield evenSplit(n, rows);
+  }
+}
+
+function evenSplit(n, rows) {
+  const sizes = [];
+  for (let r = 0; r < rows; r++) {
+    sizes.push(Math.floor(n * (r + 1) / rows) - Math.floor(n * r / rows));
+  }
+  return sizes;
+}
+
+const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+
+// Tiles in a row share a video height, and every row fills width `W`; all
+// rows are then scaled down together until they fit height `H`.
+function planRows(sizes, aspects, W, H, fitHeight) {
+  const rows = [];
+  let i = 0;
+  for (const size of sizes) {
+    const a = aspects.slice(i, i + size);
+    i += size;
+    const spare = W - (size - 1) * GAP - size * 2 * BORDER;
+    rows.push({ a, h: spare / sum(a) });
+  }
+  const fixed = rows.length * (HEADER + 2 * BORDER) + (rows.length - 1) * GAP;
+  const videoH = sum(rows.map((r) => r.h));
+  const scale = fitHeight ? Math.min(1, (H - fixed) / videoH) : 1;
+  if (scale <= 0) return null;
+  for (const r of rows) r.h *= scale;
+  return {
+    rows,
+    height: fixed + videoH * scale,
+    minH: Math.min(...rows.map((r) => r.h)),
+    minArea: Math.min(...rows.flatMap((r) => r.a.map((a) => r.h * r.h * a))),
+  };
+}
+
+// Places the visible tiles, in display order, to fill the grid. Every split
+// of the tiles into rows is tried, and the one whose smallest tile is
+// largest wins, so no tile ends up tiny.
+function layout(animate = true) {
+  if (!bundle) return;
+  const grid = $("grid");
+  const tiles = bundle.order.map((id) => bundle.byId.get(id))
+    .filter((s) => !s.tile.classList.contains("hidden"));
+  const W = grid.clientWidth - 2 * PAD;
+  const H = grid.clientHeight - 2 * PAD;
+  if (tiles.length === 0 || W <= 0 || H <= 0) return;
+  const aspects = tiles.map((s) => s.aspect);
+
+  let best = null;
+  for (const sizes of rowSplits(tiles.length)) {
+    const plan = planRows(sizes, aspects, W, H, true);
+    if (plan && (!best || plan.minArea > best.minArea)) best = plan;
+  }
+  // Too small to fit on screen (e.g. on a phone): use rows of equal height
+  // that fill the width, and let the grid scroll.
+  if (!best || best.minH < MIN_VIDEO_H) {
+    const perRow = Math.max(1, Math.floor((W + GAP) / (400 + GAP)));
+    best = planRows(
+      evenSplit(tiles.length, Math.ceil(tiles.length / perRow)),
+      aspects, W, H, false);
+    const h = best.minH;
+    for (const r of best.rows) r.h = h;
+    best.height = sum(best.rows.map((r) => r.h + HEADER + 2 * BORDER))
+      + (best.rows.length - 1) * GAP;
+  }
+
+  if (!animate) grid.classList.add("instant");
+  let y = PAD + Math.max(0, (H - best.height) / 2);
+  let i = 0;
+  for (const row of best.rows) {
+    const rowW = row.h * sum(row.a) + (row.a.length - 1) * GAP
+      + row.a.length * 2 * BORDER;
+    let x = PAD + (W - rowW) / 2;
+    for (const a of row.a) {
+      const w = row.h * a + 2 * BORDER;
+      Object.assign(tiles[i++].tile.style, {
+        left: `${x}px`, top: `${y}px`, width: `${w}px`,
+        height: `${row.h + HEADER + 2 * BORDER}px`,
+      });
+      x += w + GAP;
+    }
+    y += row.h + HEADER + 2 * BORDER + GAP;
+  }
+  if (!animate) {
+    void grid.offsetHeight;  // Apply the positions before transitions return.
+    grid.classList.remove("instant");
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reordering                                                          */
+
+// Id of the stream being dragged, since `dataTransfer` can't be read
+// during `dragover`.
+let dragId = null;
+
+function makeDraggable(handle, s) {
+  handle.draggable = true;
+  handle.addEventListener("dragstart", (e) => {
+    dragId = s.id;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", s.id);  // Firefox needs data.
+    s.tile.classList.add("dragging");
+  });
+  handle.addEventListener("dragend", () => {
+    dragId = null;
+    for (const el of document.querySelectorAll(".dragging, .drop-target")) {
+      el.classList.remove("dragging", "drop-target");
+    }
+  });
+}
+
+function makeDropTarget(el, s) {
+  el.addEventListener("dragover", (e) => {
+    if (dragId === null || dragId === s.id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    el.classList.add("drop-target");
+  });
+  el.addEventListener("dragleave", (e) => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove("drop-target");
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    el.classList.remove("drop-target");
+    if (dragId !== null && dragId !== s.id) moveStream(dragId, s.id);
+  });
+}
+
+// Moves stream `id` into the place of stream `targetId`.
+function moveStream(id, targetId) {
+  const order = bundle.order;
+  const from = order.indexOf(id);
+  const target = order.indexOf(targetId);
+  order.splice(from, 1);
+  order.splice(target, 0, id);
+  saveOrder();
+  buildStreamList();
+  layout(true);
+}
+
+const orderKey = () => `multireel.order.${bundle.path}`;
+
+// Returns the saved display order of a bundle's streams, if any, keeping
+// only streams that still exist and appending new ones.
+function loadOrder(ids) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(orderKey()));
+    if (Array.isArray(saved)) {
+      const kept = saved.filter((id) => ids.includes(id));
+      return [...kept, ...ids.filter((id) => !kept.includes(id))];
+    }
+  } catch {}
+  return ids;
+}
+
+function saveOrder() {
+  try { localStorage.setItem(orderKey(), JSON.stringify(bundle.order)); } catch {}
+}
+
+/* ------------------------------------------------------------------ */
+/* Seeking and playback                                                */
+
+const rate = () => parseFloat($("rate").value);
+
+// Seeks one video. While a seek is in flight the new target is queued
+// instead, so dragging the slider shows frames rather than aborting seeks.
+function seekVideo(s, t) {
+  const video = s.video;
+  if (video.readyState === 0) return;  // Seeks on `loadedmetadata`.
+  if (video.seeking) {
+    s.pending = t;
+    return;
+  }
+  s.pending = null;
+  video.currentTime = t;
+}
+
+function onSeeked(s) {
+  if (s.pending !== null) {
+    const t = s.pending;
+    s.pending = null;
+    seekVideo(s, t);
+  }
+}
+
+// The spec makes every frame whose index is a multiple of the keyframe
+// interval a keyframe in every stream, so seeking to one decodes a single
+// frame instead of the rest of a GOP.
+function nearestKeyframe(k) {
+  const interval = bundle.keyframe_interval;
+  const snapped = Math.round(k / interval) * interval;
+  return snapped < bundle.frame_count ? snapped : snapped - interval;
+}
+
+// Seeks every visible stream to frame `k`. While scrubbing, `k` is snapped
+// to the nearest keyframe and the URL is left alone.
+function seekAll(k, scrubbing = false) {
+  if (!bundle) return;
+  frame = clampFrame(scrubbing ? nearestKeyframe(k) : k);
+  for (const s of active()) seekVideo(s, frameToTime(frame));
+  updateReadout();
+  if (!scrubbing) writeHash();
+}
+
+function updateReadout() {
+  if (!draggingScrub) $("scrub").value = frame;
+  $("timecode").textContent = timecode(frame);
+  $("frame-readout").textContent = `frame ${frame} / ${bundle.frame_count - 1}`;
+  $("utc").textContent = utcTime(frame);
+}
+
+function play() {
+  if (!bundle || playing) return;
+  const streams = active();
+  if (streams.length === 0) return;
+  if (frame >= bundle.frame_count - 1) seekAll(0);
+  playing = true;
+  buffering = false;
+  $("play").textContent = "Pause";
+  for (const s of streams) {
+    s.video.playbackRate = rate();
+    s.video.play().catch(() => {});
+  }
+  requestAnimationFrame(tick);
+}
+
+function pause() {
+  if (!playing) return;
+  playing = false;
+  $("play").textContent = "Play";
+  const streams = active();
+  for (const s of streams) s.video.pause();
+  // Line every stream up on the master's frame.
+  const master = clockOf(streams);
+  seekAll(master ? timeToFrame(master.currentTime) : frame);
+}
+
+// The master clock: the first stream that has loaded. A stream that is
+// still loading or reloading reports time 0, so it can't be the clock.
+function clockOf(streams) {
+  const s = streams.find((s) => s.loaded && !s.reloading);
+  return s ? s.video : null;
+}
+
+function togglePlay() {
+  if (playing) pause(); else play();
+}
+
+// Runs every animation frame while playing: follows the master clock, keeps
+// the other streams within a frame of it, and holds playback while any
+// stream is still loading.
+function tick() {
+  if (!playing) return;
+  const streams = active();
+  if (streams.length === 0) { pause(); return; }
+  const master = clockOf(streams);
+  if (master) {
+    frame = timeToFrame(master.currentTime);
+    updateReadout();
+    if (master.ended || frame >= bundle.frame_count - 1) {
+      pause();
+      return;
+    }
+  }
+
+  const period = 1 / bundle.edit_rate;
+  for (const s of streams) {
+    if (!master || s.video === master || !s.loaded || s.reloading) continue;
+    const drift = s.video.currentTime - master.currentTime;
+    if (Math.abs(drift) > 0.25) {
+      seekVideo(s, master.currentTime);
+    } else if (Math.abs(drift) > period) {
+      s.video.playbackRate = rate() * (drift > 0 ? 0.95 : 1.05);
+    } else {
+      s.video.playbackRate = rate();
+    }
+  }
+
+  const waiting = streams.some((s) => s.video.seeking || s.video.readyState < 3);
+  if (waiting && !buffering) {
+    buffering = true;
+    for (const s of streams) s.video.pause();
+  } else if (!waiting && buffering) {
+    buffering = false;
+    for (const s of streams) s.video.play().catch(() => {});
+  }
+  requestAnimationFrame(tick);
+}
+
+function step(frames) {
+  if (!bundle) return;
+  pause();
+  seekAll(frame + frames);
+}
+
+/* ------------------------------------------------------------------ */
+/* Controls                                                            */
+
+// Buttons never take focus, so Space always means play/pause.
+for (const button of document.querySelectorAll("#transport button")) {
+  button.addEventListener("mousedown", (e) => e.preventDefault());
+}
+$("play").addEventListener("click", togglePlay);
+$("back").addEventListener("click", () => step(-1));
+$("fwd").addEventListener("click", () => step(1));
+$("rate").addEventListener("change", () => {
+  for (const s of active()) s.video.playbackRate = rate();
+  $("rate").blur();
+});
+
+const scrub = $("scrub");
+let scrubWasPlaying = false;
+scrub.addEventListener("pointerdown", () => {
+  draggingScrub = true;
+  scrubWasPlaying = playing;
+  pause();
+});
+scrub.addEventListener("input", () => {
+  pause();
+  seekAll(parseInt(scrub.value, 10), true);
+});
+scrub.addEventListener("change", () => {
+  draggingScrub = false;
+  seekAll(parseInt(scrub.value, 10));
+  scrub.blur();
+  if (scrubWasPlaying) play();
+  scrubWasPlaying = false;
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!bundle || e.target.tagName === "SELECT") return;
+  const second = bundle.edit_rate;
+  switch (e.key) {
+    case " ": togglePlay(); break;
+    case "ArrowLeft": step(e.shiftKey ? -second : -1); break;
+    case "ArrowRight": step(e.shiftKey ? second : 1); break;
+    case "Home": step(-bundle.frame_count); break;
+    case "End": step(bundle.frame_count); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+
+new ResizeObserver(() => layout(false)).observe($("grid"));
+
+(async () => {
+  const entries = await loadBundleList();
+  const { path, frame: startFrame } = parseHash();
+  if (path && entries.some((e) => e.path === path && !e.error)) {
+    openBundle(path, startFrame);
+  }
+})();
+</script>
+</body>
+</html>

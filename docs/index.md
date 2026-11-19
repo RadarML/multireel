@@ -9,6 +9,8 @@
 
 **Multireel** is an open-source and MIT-licensed Python framework for multimodal rendering for video editing.
 
+To watch bundles in a browser, use the [bundle player](player.md).
+
 ## Setup
 
 === "As Submodule"
