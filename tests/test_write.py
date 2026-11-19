@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +28,10 @@ from multireel import (
     Manifest,
     Profile,
     Stream,
-    read_manifest,
     write_bundle,
 )
 from multireel.bundle.manifest import stream_path
-from multireel.bundle.video import profile_info
+from multireel.bundle.video import ProfileName
 from multireel.validate import checks, validate_stream
 
 
@@ -56,7 +56,7 @@ def check_frames(
     expected = expected_samples(manifest, sensors)
     assert any(None in shown for shown in expected.values())
     for stream_id, stream in streams.items():
-        alpha = profile_info(stream.profile).alpha
+        alpha = stream.profile.alpha
         first = next(stream.frames(np.array([0])))
         height, width = first.shape[:2]
         frames = read_frames(
@@ -72,7 +72,7 @@ def check_frames(
 def test_every_edit_rate(tmp_path: Path, edit_rate: int) -> None:
     """Bundles at every edit rate show the right samples."""
     manifest, sensors, streams = write_sample(tmp_path, edit_rate)
-    assert read_manifest(tmp_path) == manifest
+    assert Manifest.read(tmp_path) == manifest
     check_frames(tmp_path, manifest, sensors, streams)
 
 
@@ -101,7 +101,7 @@ def test_nvenc(tmp_path: Path) -> None:
 def test_processes(tmp_path: Path) -> None:
     """Bundles written with one process per stream match threaded ones."""
     manifest, sensors, streams = write_sample(tmp_path, processes=True)
-    assert read_manifest(tmp_path) == manifest
+    assert Manifest.read(tmp_path) == manifest
     check_frames(tmp_path, manifest, sensors, streams)
 
 
@@ -125,11 +125,43 @@ def test_process_workers(tmp_path: Path) -> None:
     check_frames(tmp_path, manifest, sensors, streams)
 
 
-@pytest.mark.parametrize("profile", ["hevc-main10-420", "prores-4444"])
-def test_bgr_channel_order(tmp_path: Path, profile: Profile) -> None:
+@pytest.mark.parametrize("profile", [
+    Profile("hevc", "422", 10, False),
+    Profile("hevc", "420", 8, False),
+    Profile("prores", "444", 12, False, "4444xq"),
+])
+def test_custom_profile(tmp_path: Path, profile: Profile) -> None:
+    """Custom profiles are encoded, validated and read back."""
+    sensors = sample_sensors()
+    streams = sample_streams(sensors)
+    streams["cam"] = replace(streams["cam"], profile=profile)
+    manifest = write_bundle(
+        tmp_path, streams, sample_sync(), recording_id="drive_0423_a",
+        timecode_origin=ORIGIN)
+    assert Manifest.read(tmp_path).streams["cam"].profile == profile
+    check_frames(tmp_path, manifest, sensors, streams)
+
+
+@pytest.mark.parametrize("profile", [
+    Profile("hevc", "420", 10, True),
+    Profile("prores", "422", 10, False),
+])
+def test_unsupported_profile(tmp_path: Path, profile: Profile) -> None:
+    """Profiles the encoder cannot produce are a ValueError."""
+    sensors = sample_sensors()
+    streams = sample_streams(sensors)
+    streams["cam"] = replace(streams["cam"], profile=profile)
+    with pytest.raises(ValueError):
+        write_bundle(tmp_path, streams, sample_sync(),
+                     recording_id="drive_0423_a", timecode_origin=ORIGIN)
+
+
+@pytest.mark.parametrize("name", ["hevc-main10-420", "prores-4444"])
+def test_bgr_channel_order(tmp_path: Path, name: ProfileName) -> None:
     """BGR(A) frames are encoded with the same colors as RGB(A) frames."""
     rgb = np.array([200, 40, 20], dtype=np.uint8)
-    alpha = profile_info(profile).alpha
+    profile = Profile.from_name(name)
+    alpha = profile.alpha
 
     def solid(color: UInt8[np.ndarray, "C"]) -> UInt8[np.ndarray, "H W C"]:
         pixel = np.concatenate([color, [255]]) if alpha else color
@@ -161,8 +193,7 @@ def test_verify_decode(
     manifest, _, _ = write_sample(tmp_path)
     monkeypatch.setattr(checks, "decode_errors", lambda *a, **k: ["broken"])
     file = stream_path(tmp_path, "cam")
-    assert [v.rule for v in validate_stream(file, "cam", manifest)] == [
-        "decode"]
+    assert validate_stream(file, "cam", manifest) == ["decode: broken"]
     assert validate_stream(file, "cam", manifest, decode=False) == []
 
 
@@ -182,7 +213,7 @@ def test_failed_render_leaves_no_manifest(
 
     streams["thermal"] = Stream(
         sensors["thermal"].metadata.timestamps, broken,
-        profile="prores-422-lt")
+        profile=Profile.from_name("prores-422-lt"))
     with pytest.raises(RuntimeError, match="renderer crashed"):
         write_bundle(tmp_path, streams, sample_sync(),
                      recording_id="drive_0423_a", timecode_origin=ORIGIN,
@@ -203,7 +234,7 @@ def test_process_exits_without_result(tmp_path: Path) -> None:
 
     streams["thermal"] = Stream(
         sensors["thermal"].metadata.timestamps, dies,
-        profile="prores-422-lt")
+        profile=Profile.from_name("prores-422-lt"))
     with pytest.raises(RuntimeError, match="'thermal' exited with code 3"):
         write_bundle(tmp_path, streams, sample_sync(),
                      recording_id="drive_0423_a", timecode_origin=ORIGIN,
@@ -241,7 +272,7 @@ def test_bad_overlay(tmp_path: Path, bad: dict) -> None:
     streams = sample_streams(sensors)
     streams["cam2"] = Stream.from_sensor(
         sensors["cam"], lambda i: render_pattern(i, 128, 64, True),
-        profile="prores-4444", **bad)
+        profile=Profile.from_name("prores-4444"), **bad)
     with pytest.raises(ValueError):
         write_bundle(tmp_path, streams, sample_sync(),
                      recording_id="drive_0423_a", timecode_origin=ORIGIN)

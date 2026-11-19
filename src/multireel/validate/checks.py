@@ -2,88 +2,54 @@
 
 import re
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, get_args
 
 from ..bundle.manifest import Manifest
-from ..bundle.video import Profile, clip_name, profile_info, reel_name
+from ..bundle.video import clip_name, reel_name
 from .probe import StreamProbe, decode_errors, probe
 
-Rule = Literal[
-    "profile",
-    "edit-rate",
-    "constant-frame-rate",
-    "frame-count",
-    "start-timecode",
-    "no-b-frames",
-    "keyframe-alignment",
-    "dimensions",
-    "square-pixels",
-    "progressive",
-    "color",
-    "tracks",
-    "hvc1-tag",
-    "timecode-track",
-    "colr-tag",
-    "reel-name",
-    "clip-name",
-    "encoder-metadata",
-    "decode",
-]
-"""A per-stream rule from the bundle spec, one per MUST.
-
-`no-b-frames` also covers closed GOPs: without reordering, no HEVC frame can
-reference a frame before the keyframe that starts its GOP, and ProRes is
-intra-only.
-"""
-
-
-@dataclass(frozen=True)
-class Violation:
-    """One failed check.
-
-    Attributes:
-        rule: rule that was broken.
-        message: what was found.
-        stream: stream ID.
-    """
-
-    rule: Rule
-    message: str
-    stream: str
+PRORES_TAGS = {
+    "proxy": "apco", "lt": "apcs", "standard": "apcn", "hq": "apch",
+    "4444": "ap4h", "4444xq": "ap4x"}
+"""QuickTime sample entry of each ProRes level."""
 
 
 def check_stream(
     probe: StreamProbe, stream_id: str, manifest: Manifest
-) -> list[Violation]:
+) -> list[str]:
     """Check the properties of one stream file against the spec.
 
-    This covers every per-stream rule except `decode`, which needs the file.
+    This covers every per-stream MUST except `decode`, which needs the file.
+    `no-b-frames` also covers closed GOPs: without reordering, no HEVC frame
+    can reference a frame before the keyframe that starts its GOP, and
+    ProRes is intra-only.
 
     Returns:
-        Every failed check; empty if the stream is valid.
+        One `"<rule>: <message>"` string per failed check, such as
+            `"hvc1-tag: HEVC sample entry is ['hev1']."`; empty if the
+            stream is valid.
     """
-    violations: list[Violation] = []
+    violations: list[str] = []
 
-    def fail(rule: Rule, message: str) -> None:
-        violations.append(Violation(rule, message, stream_id))
+    def fail(rule: str, message: str) -> None:
+        violations.append(f"{rule}: {message}")
 
-    entry = manifest.streams[stream_id]
-    if entry.profile not in get_args(Profile):
-        fail("profile", f"Unknown profile {entry.profile!r}.")
-    else:
-        info = profile_info(entry.profile)
-        fmt = probe.pixel_format
-        depth = re.search(r"p(\d*)(?:le|be)?$", fmt)
-        found = (
-            probe.codec,
-            next((c for c in ("420", "422", "444") if c in fmt), None),
-            int(depth.group(1)) if depth and depth.group(1) else 8,
-            fmt.startswith("yuva"))
-        if found != (info.codec, info.chroma, info.bit_depth, info.alpha):
+    profile = manifest.streams[stream_id].profile
+    fmt = probe.pixel_format
+    depth = re.search(r"p(\d*)(?:le|be)?$", fmt)
+    found = (
+        probe.codec,
+        next((c for c in ("420", "422", "444") if c in fmt), None),
+        int(depth.group(1)) if depth and depth.group(1) else 8,
+        fmt.startswith("yuva"))
+    if found != (
+            profile.codec, profile.chroma, profile.bit_depth, profile.alpha):
+        fail("profile", f"{probe.codec} {fmt} does not match {profile}.")
+    if profile.codec == "prores" and profile.level is not None:
+        tag = next((t for k, t in probe.tracks if k == "video"), None)
+        if tag != PRORES_TAGS.get(profile.level):
             fail("profile",
-                 f"{probe.codec} {fmt} does not match {entry.profile}.")
+                 f"ProRes sample entry {tag} is not level {profile.level}.")
 
     rate = manifest.edit_rate
     if probe.frame_rate != f"{rate}/1":
@@ -142,7 +108,8 @@ def check_stream(
     if probe.reel_name != expected_reel:
         fail("reel-name", f"Reel name {probe.reel_name!r}, not "
              f"{expected_reel!r}.")
-    expected_clip = clip_name(manifest.recording_id, stream_id, entry.label)
+    expected_clip = clip_name(
+        manifest.recording_id, stream_id, manifest.streams[stream_id].label)
     if probe.tags.get("title") != expected_clip:
         fail("clip-name", f"Clip name {probe.tags.get('title')!r}, not "
              f"{expected_clip!r}.")
@@ -161,7 +128,7 @@ def validate_stream(
     ffmpeg: str = "ffmpeg",
     ffprobe: str = "ffprobe",
     decode: bool = True,
-) -> list[Violation]:
+) -> list[str]:
     """Check one stream file against the spec and its manifest.
 
     The manifest does not need to be written yet, so the writer can check
@@ -178,13 +145,14 @@ def validate_stream(
             and packet properties are checked.
 
     Returns:
-        Every failed check; empty if the stream is valid.
+        One `"<rule>: <message>"` string per failed check, as in
+            [`check_stream`][^.]; empty if the stream is valid.
     """
     try:
         properties = probe(path, ffprobe)
     except (subprocess.CalledProcessError, ValueError) as e:
-        return [Violation("decode", f"Cannot read {path}: {e}", stream_id)]
+        return [f"decode: Cannot read {path}: {e}"]
     violations = check_stream(properties, stream_id, manifest)
     if decode and (errors := decode_errors(path, ffmpeg)):
-        violations.append(Violation("decode", "; ".join(errors), stream_id))
+        violations.append(f"decode: {'; '.join(errors)}")
     return violations

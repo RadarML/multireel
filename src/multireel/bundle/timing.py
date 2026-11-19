@@ -9,15 +9,6 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
-def _origin_frame(origin: datetime, rate: int) -> int:
-    """Return the absolute frame index of a timecode origin."""
-    if origin.tzinfo is None or origin.microsecond != 0:
-        raise ValueError(
-            f"Timecode origin must be timezone-aware and a whole number of "
-            f"seconds: {origin}")
-    return int(origin.timestamp()) * rate
-
-
 @dataclass(frozen=True)
 class Timecode:
     """Non-drop-frame timecode at a given edit rate.
@@ -36,6 +27,15 @@ class Timecode:
     frames: int
     rate: int
 
+    @staticmethod
+    def _origin_frame(origin: datetime, rate: int) -> int:
+        """Return the absolute frame index of a timecode origin."""
+        if origin.tzinfo is None or origin.microsecond != 0:
+            raise ValueError(
+                f"Timecode origin must be timezone-aware and a whole number "
+                f"of seconds: {origin}")
+        return int(origin.timestamp()) * rate
+
     @classmethod
     def from_frame(
         cls, frame: int, rate: int, origin: datetime
@@ -49,7 +49,7 @@ class Timecode:
             ValueError: if the timecode would wrap, or `origin` is naive or
                 not a whole number of seconds.
         """
-        offset = frame - _origin_frame(origin, rate) + 3600 * rate
+        offset = frame - cls._origin_frame(origin, rate) + 3600 * rate
         if not 0 <= offset < 24 * 3600 * rate:
             raise ValueError(
                 f"Frame {frame} is outside the timecode range of origin "
@@ -80,7 +80,9 @@ class Timecode:
         offset = (
             ((self.hours * 60 + self.minutes) * 60 + self.seconds) * self.rate
             + self.frames)
-        return offset - 3600 * self.rate + _origin_frame(origin, self.rate)
+        return (
+            offset - 3600 * self.rate
+            + self._origin_frame(origin, self.rate))
 
     def __str__(self) -> str:
         """Format as `"HH:MM:SS:FF"`."""

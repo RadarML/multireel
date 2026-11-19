@@ -4,15 +4,15 @@ import shutil
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 import numpy as np
 import pytest
 from synthetic import ORIGIN, sample_sensors, sample_streams, sample_sync
 
-from multireel import read_manifest, write_bundle
+from multireel import Manifest, write_bundle
 from multireel.bundle.manifest import stream_path
-from multireel.validate import Rule, validate_stream
+from multireel.validate import validate_stream
 from multireel.validate.checks import check_stream
 from multireel.validate.probe import StreamProbe, probe
 
@@ -31,7 +31,7 @@ def _without_encoder(p: StreamProbe) -> dict[str, Any]:
     return {k: v for k, v in p.tags.items() if k != "multireel_encoder"}
 
 
-STREAM_VIOLATIONS: dict[Rule, Callable[[StreamProbe], dict[str, Any]]] = {
+STREAM_VIOLATIONS: dict[str, Callable[[StreamProbe], dict[str, Any]]] = {
     "profile": lambda p: {"pixel_format": "yuv420p"},
     "edit-rate": lambda p: {"frame_rate": "25/1"},
     "constant-frame-rate": lambda p: {
@@ -57,18 +57,19 @@ STREAM_VIOLATIONS: dict[Rule, Callable[[StreamProbe], dict[str, Any]]] = {
 
 
 @pytest.mark.parametrize("rule", list(STREAM_VIOLATIONS))
-def test_stream_violation(bundle: Path, rule: Rule) -> None:
+def test_stream_violation(bundle: Path, rule: str) -> None:
     """Each crafted stream property breaks exactly the expected rule."""
-    manifest = read_manifest(bundle)
+    manifest = Manifest.read(bundle)
     good = probe(stream_path(bundle, "cam"))
     assert check_stream(good, "cam", manifest) == []
     bad = replace(good, **STREAM_VIOLATIONS[rule](good))
-    assert rule in {v.rule for v in check_stream(bad, "cam", manifest)}
+    assert any(m.startswith(f"{rule}: ")
+               for m in check_stream(bad, "cam", manifest))
 
 
 def test_decode_violation(bundle: Path, tmp_path: Path) -> None:
     """A stream file with corrupted frame data breaks the `decode` rule."""
-    manifest = read_manifest(bundle)
+    manifest = Manifest.read(bundle)
     file = tmp_path / "cam.mov"
     shutil.copy(stream_path(bundle, "cam"), file)
     assert validate_stream(file, "cam", manifest) == []
@@ -77,10 +78,16 @@ def test_decode_violation(bundle: Path, tmp_path: Path) -> None:
     data[start:start + 2000] = np.random.default_rng(0).integers(
         0, 256, 2000, dtype=np.uint8).tobytes()
     file.write_bytes(bytes(data))
-    assert "decode" in {
-        v.rule for v in validate_stream(file, "cam", manifest)}
+    assert any(m.startswith("decode: ")
+               for m in validate_stream(file, "cam", manifest))
 
 
-def test_every_rule_is_tested() -> None:
-    """Every rule has a crafted violation."""
-    assert set(STREAM_VIOLATIONS) | {"decode"} == set(get_args(Rule))
+
+def test_prores_level_violation(bundle: Path) -> None:
+    """A ProRes stream with another level's sample entry breaks `profile`."""
+    manifest = Manifest.read(bundle)
+    good = probe(stream_path(bundle, "lidar"))
+    assert check_stream(good, "lidar", manifest) == []
+    tracks = [("video", "apcs"), ("data", "tmcd")]
+    assert any(m.startswith("profile: ") for m in check_stream(
+        replace(good, tracks=tracks), "lidar", manifest))

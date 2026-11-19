@@ -10,27 +10,20 @@ the bundle spec. Its modules follow the sections of the spec:
 """
 
 from .manifest import (
-    AlphaMode,
     Manifest,
     StreamEntry,
-    read_manifest,
     stream_path,
-    write_manifest,
 )
 from .timing import Timecode
-from .video import Profile, ProfileInfo, clip_name, profile_info, reel_name
+from .video import Profile, ProfileName, clip_name, reel_name
 
 __all__ = [
-    "AlphaMode",
     "Manifest",
     "Profile",
-    "ProfileInfo",
+    "ProfileName",
     "StreamEntry",
     "Timecode",
     "clip_name",
-    "profile_info",
-    "read_manifest",
     "reel_name",
     "stream_path",
-    "write_manifest",
 ]

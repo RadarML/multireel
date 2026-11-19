@@ -28,7 +28,7 @@ import numpy as np
 from jaxtyping import UInt8
 
 from .bundle.timing import Timecode
-from .bundle.video import Profile, profile_info
+from .bundle.video import Profile
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ class EncodeOptions:
         hevc_encoder: encoder for HEVC profiles.
         quality: constant-quality level for HEVC profiles: CRF for
             `libx265`, CQ for `hevc_nvenc`. Lower is better. ProRes quality
-            is set by the profile.
+            is set by the profile's `level`.
     """
 
     ffmpeg: str = "ffmpeg"
@@ -88,32 +88,50 @@ def _ffmpeg_version(ffmpeg: str) -> str:
 def _codec_args(
     format: StreamFormat, options: EncodeOptions
 ) -> tuple[str, str, list[str]]:
-    """Return the encoder name, its input pixel format, and its arguments."""
+    """Return the encoder name, its input pixel format, and its arguments.
+
+    Raises:
+        ValueError: if the encoder cannot produce the profile.
+    """
     n = str(format.keyframe_interval)
     q = str(options.quality)
-    chroma = profile_info(format.profile).chroma
+    profile = format.profile
+    chroma, depth = profile.chroma, profile.bit_depth
 
-    if format.profile.startswith("prores"):
-        prores_profile = {
-            "prores-422-lt": "1", "prores-422-hq": "3", "prores-4444": "4"
-        }[format.profile]
-        pix_fmt = "yuva444p10le" if chroma == "444" else "yuv422p10le"
-        return "prores_ks", pix_fmt, [
-            "-c:v", "prores_ks", "-profile:v", prores_profile,
+    if profile.codec == "prores":
+        if profile.level is None:
+            raise ValueError(f"ProRes profile {profile} has no level.")
+        # ProRes is always encoded from 10-bit input; 4444 decodes as
+        # 12-bit regardless.
+        alpha = "a" if profile.alpha else ""
+        return "prores_ks", f"yuv{alpha}{chroma}p10le", [
+            "-c:v", "prores_ks", "-profile:v", profile.level,
             "-vendor", "apl0"]
 
+    if profile.alpha:
+        raise ValueError("HEVC profiles cannot carry alpha.")
+
     if options.hevc_encoder == "hevc_nvenc":
-        pix_fmt = "yuv444p16le" if chroma == "444" else "p010le"
+        pix_fmt = {
+            ("420", 8): "nv12", ("420", 10): "p010le",
+            ("444", 8): "yuv444p", ("444", 10): "yuv444p16le",
+        }.get((chroma, depth))
+        if pix_fmt is None:
+            raise ValueError(
+                f"hevc_nvenc does not support {chroma} {depth}-bit.")
+        nvenc_profile = "rext" if chroma == "444" else (
+            "main10" if depth == 10 else "main")
         return "hevc_nvenc", pix_fmt, [
-            "-c:v", "hevc_nvenc",
-            "-profile:v", "rext" if chroma == "444" else "main10",
+            "-c:v", "hevc_nvenc", "-profile:v", nvenc_profile,
             "-rc", "vbr", "-cq", q, "-b:v", "0", "-bf", "0", "-g", n,
             "-forced-idr", "1", "-no-scenecut", "1", "-tag:v", "hvc1"]
 
-    pix_fmt = "yuv444p10le" if chroma == "444" else "yuv420p10le"
+    pix_fmt = f"yuv{chroma}p" + (f"{depth}le" if depth > 8 else "")
+    x265_profile = (
+        ("main" if depth == 8 else f"main{depth}") if chroma == "420"
+        else f"main{chroma}-{depth}")
     return "libx265", pix_fmt, [
-        "-c:v", "libx265",
-        "-profile:v", "main444-10" if chroma == "444" else "main10",
+        "-c:v", "libx265", "-profile:v", x265_profile,
         "-crf", q,
         "-x265-params",
         f"keyint={n}:min-keyint={n}:scenecut=0:bframes=0:open-gop=0"
@@ -135,7 +153,7 @@ class Encoder:
     def __init__(
         self, path: Path, format: StreamFormat, options: EncodeOptions
     ) -> None:
-        self.channels = 4 if profile_info(format.profile).alpha else 3
+        self.channels = 4 if format.profile.alpha else 3
         self.shape = (format.height, format.width, self.channels)
 
         name, pix_fmt, codec = _codec_args(format, options)

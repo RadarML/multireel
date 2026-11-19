@@ -14,7 +14,7 @@ Multireel is a multimodal rendering framework for video editing. The project is 
 - `bundle/`: the bundle format as code (`video`, `timing`, `manifest`, mirroring the spec's sections). Pure data types and functions; implementation defaults do not belong here.
 - `write.py`: `Stream` (an [abstract dataloader](https://radarml.github.io/abstract-dataloader/) `Sensor` plus a render function) and `write_bundle`, which writes each stream in its own thread, or its own forked process with `processes=True`.
 - `encode.py`: `ffmpeg` encoding.
-- `validate/`: `checks` (per-stream rules; returns a list of `Violation`s) and `probe` (`ffprobe` reading). Used by `write_bundle` to check each stream file it encodes.
+- `validate/`: `checks` (per-stream rules, including that each file matches its `Profile`; returns a list of `"<rule>: <message>"` strings) and `probe` (`ffprobe` reading). Used by `write_bundle` to check each stream file it encodes.
 - `tests/synthetic.py`: synthetic sensors and pattern frames with known ground truth, for end-to-end tests.
 
 Encoding and validation use the `ffmpeg`/`ffprobe` on `PATH`. Keep things simple: use built-in exceptions (`ValueError`, `RuntimeError`) unless a caller needs to catch a specific case, and avoid defensive layers that nothing uses yet.

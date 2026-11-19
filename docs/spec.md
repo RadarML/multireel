@@ -23,7 +23,7 @@ The keywords MUST, SHOULD and MAY are used as defined in [RFC 2119](https://www.
 | Bundle | A directory that holds the streams rendered from one recording over one time range, together with a manifest. |
 | Stream | One video file in a bundle, stored at `streams/<stream_id>.mov` and rendered from one sequence of source samples. |
 | Manifest | The `manifest.yaml` file at the root of a bundle, which describes the bundle and its streams. |
-| Profile | One of five named codec configurations that a stream can be encoded with. |
+| Profile | The codec configuration a stream is encoded with: one of five standard profiles, or a custom one. |
 | Overlay | A stream with alpha that is composited over another stream, called its base stream. |
 | Edit rate | The constant frame rate shared by every stream in a bundle. |
 | Frame instant | The absolute time that a frame represents. Frame `n` at edit rate `r` sits at `n/r` seconds since the UTC epoch. |
@@ -33,19 +33,21 @@ The keywords MUST, SHOULD and MAY are used as defined in [RFC 2119](https://www.
 
 ## Video format
 
-Every stream in a bundle is a constant-frame-rate MOV file at the bundle's edit rate, encoded with one of five profiles.
+Every stream in a bundle is a constant-frame-rate MOV file at the bundle's edit rate, encoded with a [profile](#encoding-profiles).
 
 ### Encoding profiles
 
-Each stream MUST use exactly one of the following profiles.
+Each stream SHOULD use one of the following standard profiles, which common video editors can decode.
 
-| Profile | Codec | Chroma, bit depth | Alpha |
-| --- | --- | --- | --- |
-| `hevc-main10-420` | HEVC Main 10 | 4:2:0, 10-bit | No |
-| `hevc-444` | HEVC Range Extensions | 4:4:4, 10-bit | No |
-| `prores-422-lt` | Apple ProRes 422 LT | 4:2:2, 10-bit | No |
-| `prores-422-hq` | Apple ProRes 422 HQ | 4:2:2, 10-bit | No |
-| `prores-4444` | Apple ProRes 4444 | 4:4:4, 12-bit | Yes |
+| Profile | Codec | Chroma, bit depth | Alpha | Level |
+| --- | --- | --- | --- | --- |
+| `hevc-main10-420` | HEVC Main 10 | 4:2:0, 10-bit | No | |
+| `hevc-444` | HEVC Range Extensions | 4:4:4, 10-bit | No | |
+| `prores-422-lt` | Apple ProRes 422 LT | 4:2:2, 10-bit | No | `lt` |
+| `prores-422-hq` | Apple ProRes 422 HQ | 4:2:2, 10-bit | No | `hq` |
+| `prores-4444` | Apple ProRes 4444 | 4:4:4, 12-bit | Yes | `4444` |
+
+A stream MAY instead use a custom profile, given by its codec (`hevc` or `prores`), chroma subsampling (`420`, `422` or `444`), bit depth as decoded, whether it has alpha, and, for ProRes, its level: `proxy`, `lt`, `standard`, `hq`, `4444` or `4444xq`. A stream file MUST match its profile, standard or custom.
 
 Overlay streams SHOULD use `prores-4444`. Other streams MAY use any profile.
 
@@ -173,9 +175,16 @@ streams:
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `label` | No | Human-readable name for display |
-| `profile` | Yes | [Encoding profile](#encoding-profiles) |
+| `profile` | Yes | [Encoding profile](#encoding-profiles): a standard profile name, or a mapping for a custom profile |
 | `overlay_of` | No | Base stream ID, for overlays only |
 | `alpha_mode` | No | `"straight"` (default) or `"premultiplied"`, for overlays only |
 | `info` | No | Mapping of any structure, whose contents this spec does not define |
+
+A `profile` string MUST be the name of a standard profile. A `profile` mapping MUST have the keys `codec` (string), `chroma` (string), `bit_depth` (integer) and `alpha` (boolean), and MAY have `level` (string) for ProRes. A profile that matches a standard profile SHOULD be written as its name.
+
+```yaml
+  radar_raw:
+    profile: { codec: "hevc", chroma: "422", bit_depth: 12, alpha: false }
+```
 
 `overlay_of` MUST name another stream in the same bundle, and that stream MUST NOT itself be an overlay. Properties stored in the stream files, such as dimensions, are not repeated in the manifest.

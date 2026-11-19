@@ -7,13 +7,13 @@ function that renders one sample:
 
 ```python
 from abstract_dataloader.generic import Nearest
-from multireel import Stream, write_bundle
+from multireel import Profile, Stream, write_bundle
 
 streams = {
     "front_cam": Stream.from_sensor(trace["camera"], render_camera),
     "front_boxes": Stream.from_sensor(
         trace["detections"], render_boxes,
-        profile="prores-4444", overlay_of="front_cam"),
+        profile=Profile.from_name("prores-4444"), overlay_of="front_cam"),
 }
 manifest = write_bundle(
     "out/drive_0423_a", streams,
@@ -65,11 +65,9 @@ from abstract_dataloader import spec
 from jaxtyping import Float64, Int64, UInt8
 
 from .bundle.manifest import (
-    AlphaMode,
     Manifest,
     StreamEntry,
     stream_path,
-    write_manifest,
 )
 from .bundle.timing import Timecode
 from .bundle.video import Profile, clip_name, reel_name
@@ -98,7 +96,7 @@ class Stream:
             once per bundle, so the same `Stream` can be written more than
             once. Frames must be 8-bit and the same size for every sample,
             with an alpha channel last if the profile has alpha.
-        profile: encoding profile.
+        profile: encoding profile; `hevc-main10-420` by default.
         label: human-readable name, used in the manifest and clip name.
         overlay_of: base stream ID, for overlays.
         alpha_mode: how the frames' alpha is stored, for overlays.
@@ -111,10 +109,10 @@ class Stream:
     frames: Callable[
         [Int64[np.ndarray, "K"]], Iterator[UInt8[np.ndarray, "H W C"]]
     ]
-    profile: Profile = "hevc-main10-420"
+    profile: Profile = Profile.from_name("hevc-main10-420")
     label: str | None = None
     overlay_of: str | None = None
-    alpha_mode: AlphaMode = "straight"
+    alpha_mode: Literal["straight", "premultiplied"] = "straight"
     info: Mapping[str, Any] = field(default_factory=dict)
     channel_order: ChannelOrder = "rgb"
 
@@ -323,7 +321,8 @@ def write_bundle(
             ffprobe=options.ffprobe, decode=verify_decode)
         if violations:
             raise RuntimeError(
-                f"Stream {stream_id!r} failed validation: {violations}")
+                f"Stream {stream_id!r} failed validation:\n"
+                + "\n".join(violations))
 
     (path / "streams").mkdir(parents=True, exist_ok=True)
     if processes:
@@ -341,7 +340,7 @@ def write_bundle(
                     future.result()
     report()
 
-    write_manifest(path, manifest)
+    manifest.write(path)
     return manifest
 
 

@@ -17,7 +17,7 @@ from abstract_dataloader import abstract
 from abstract_dataloader.generic import Nearest
 from jaxtyping import Float64, UInt8
 
-from multireel import Manifest, Stream
+from multireel import Manifest, Profile, Stream
 
 ORIGIN = datetime(2026, 11, 18, 16, 0, 0, tzinfo=UTC)
 """Timecode origin of the sample bundles."""
@@ -140,15 +140,17 @@ def sample_streams(
         "cam": Stream.from_sensor(
             sensors["cam"], pattern(128, 64), label="Front camera"),
         "radar": Stream.from_sensor(
-            sensors["radar"], pattern(64, 32), profile="hevc-444"),
+            sensors["radar"], pattern(64, 32),
+            profile=Profile.from_name("hevc-444")),
         "lidar": Stream.from_sensor(
-            sensors["lidar"], pattern(128, 64), profile="prores-422-hq"),
+            sensors["lidar"], pattern(128, 64),
+            profile=Profile.from_name("prores-422-hq")),
         "thermal": Stream.from_sensor(
-            sensors["thermal"], pattern(128, 64), profile="prores-422-lt",
-            sequential=True),
+            sensors["thermal"], pattern(128, 64),
+            profile=Profile.from_name("prores-422-lt"), sequential=True),
         "boxes": Stream.from_sensor(
             sensors["boxes"], pattern(128, 64, alpha=True),
-            profile="prores-4444", overlay_of="cam"),
+            profile=Profile.from_name("prores-4444"), overlay_of="cam"),
     }
 
 

@@ -9,7 +9,7 @@ line up with each other in a video editor.
 - [`validate`][.validate]: checking stream files against the spec.
 """
 
-from .bundle import Manifest, Profile, read_manifest
+from .bundle import Manifest, Profile
 from .encode import EncodeOptions
 from .write import Stream, write_bundle
 
@@ -18,6 +18,5 @@ __all__ = [
     "Manifest",
     "Profile",
     "Stream",
-    "read_manifest",
     "write_bundle",
 ]
