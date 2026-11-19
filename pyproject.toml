@@ -21,7 +21,15 @@ classifiers = [
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
 
-dependencies = []
+dependencies = [
+    "abstract-dataloader>=0.4.7",
+    "jaxtyping>=0.2.32",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+multireel-validate = "multireel.validate.cli:main"
 
 [project.optional-dependencies]
 docs = [
@@ -36,7 +44,8 @@ dev = [
     "coverage",
     "pytest-cov",
     "pyright >= 1.0.0",
-    "ruff >= 0.11.0"
+    "ruff >= 0.11.0",
+    "types-pyyaml>=6.0.12.20261113",
 ]
 
 [project.urls]

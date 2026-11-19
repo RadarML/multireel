@@ -5,7 +5,11 @@ repo_name: RadarML/multireel
 nav:
   - Home: index.md
   - Bundle Spec: spec.md
-  - API: api.md
+  - API:
+    - bundle: api/bundle.md
+    - write: api/write.md
+    - encode: api/encode.md
+    - validate: api/validate.md
 
 extra_css:
   - stylesheets/extra.css
@@ -54,7 +58,10 @@ plugins:
       - index.md: Project overview and installation
       - spec.md: Bundle file format spec
       "Development":
-      - api.md: API reference
+      - api/bundle.md: Bundle format types and functions
+      - api/write.md: Writing bundles from sensors
+      - api/encode.md: Encoding stream files with ffmpeg
+      - api/validate.md: Checking bundles against the spec
 - mkdocstrings:
     default_handler: python_xref
     handlers:
@@ -79,6 +86,7 @@ plugins:
         inventories:
         - https://docs.python.org/3/objects.inv
         - https://numpy.org/doc/stable/objects.inv
+        - https://radarml.github.io/abstract-dataloader/objects.inv
 
 markdown_extensions:
   - pymdownx.highlight:

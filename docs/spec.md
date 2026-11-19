@@ -29,8 +29,7 @@ The keywords MUST, SHOULD and MAY are used as defined in [RFC 2119](https://www.
 | Frame instant | The absolute time that a frame represents. Frame `n` at edit rate `r` sits at `n/r` seconds since the UTC epoch. |
 | Timecode origin | The absolute UTC time shown as timecode 01:00:00:00. |
 | Keyframe interval | The number of frames `N` such that every frame whose index is a multiple of `N` is a keyframe in every stream. |
-| Maximum hold age | The longest time after its timestamp that a source sample can still be shown. |
-| No-data frame | A frame for which no source sample is recent enough to show. |
+| No-data frame | A frame that shows no source sample. |
 
 ## Video format
 
@@ -50,7 +49,7 @@ Each stream MUST use exactly one of the following profiles.
 
 Overlay streams SHOULD use `prores-4444`. Other streams MAY use any profile.
 
-**Decoding.** Every stream MUST decode correctly in software with stock FFmpeg 7.1.
+**Decoding.** Every stream MUST decode correctly in software with stock FFmpeg.
 
 ### Frame rate and keyframes
 
@@ -58,7 +57,7 @@ Overlay streams SHOULD use `prores-4444`. Other streams MAY use any profile.
 
 **Group of Pictures (GOP) structure.** GOPs MUST be closed, so no frame may reference a frame outside its own GOP. B-frames MUST NOT be used, so decode order equals presentation order. Files MUST NOT need composition time offsets or edit lists.
 
-**Keyframe alignment.** The bundle declares a single keyframe interval `N`, in frames. Every frame whose index is a multiple of `N` MUST be a keyframe (IDR) in every stream. Other frames MAY also be keyframes. ProRes profiles are intra-only, so every ProRes frame is a keyframe.
+**Keyframe alignment.** The bundle declares a single keyframe interval `N`, in frames. Every frame whose position in the stream, counting from 0, is a multiple of `N` MUST be a keyframe (IDR) in every stream. Other frames MAY also be keyframes. ProRes profiles are intra-only, so every ProRes frame is a keyframe.
 
 ### Picture format
 
@@ -72,7 +71,7 @@ Each stream is one QuickTime (MOV) file.
 
 **Tracks.** The file MUST contain one video track and one `tmcd` timecode track, and no audio, subtitle or data tracks. HEVC streams MUST use the `hvc1` sample entry rather than `hev1`, because QuickTime and some editors refuse `hev1`. The timecode track MUST be non-drop-frame at the edit rate, and the first frame's timecode MUST equal the bundle's `start_timecode`.
 
-**Color tags.** A `colr` atom (`nclx`) MUST state BT.709 primaries, transfer and matrix, and limited range. The color fields in the bitstream (the HEVC VUI or the ProRes frame header) MUST match it.
+**Color tags.** A `colr` atom of type `nclc` or `nclx` MUST state BT.709 primaries, transfer and matrix. An `nclx` atom MUST also state limited range. The color fields in the bitstream (the HEVC VUI or the ProRes frame header) MUST match it.
 
 **Names and encoder metadata.** The reel name MUST be `<recording_id>.<stream_id>`. The clip name MUST be `<recording_id> <label>`, with the stream ID in place of the label if the stream has none. File metadata MUST record the encoder name, encoder version and full encoder settings. This spec does not fix which QuickTime metadata fields hold this information.
 
@@ -87,15 +86,13 @@ An overlay is a stream with alpha that is composited over a base stream.
 
 ## Time model
 
-The time model defines where each frame sits in absolute time, how frames map to timecode, and which source sample each frame shows.
+The time model defines where each frame sits in absolute time and how frames map to timecode.
 
 ### Frame grid
 
-**Clock domain.** All times in a bundle are expressed in one time base, which is integer nanoseconds since the UTC epoch (Unix time). The source timestamps of every stream in a bundle are in this time base. This spec does not define which moment of a measurement a timestamp refers to, such as the start or middle of an exposure.
+**Clock domain.** All times in a bundle are expressed in one time base, which is seconds since the UTC epoch (Unix time). The source timestamps of every stream in a bundle are in this time base. This spec does not define which moment of a measurement a timestamp refers to, such as the start or middle of an exposure.
 
 **Frame instants.** Frame `n` of a bundle at edit rate `r` sits at the instant `n/r` seconds since the UTC epoch. All bundles at all edit rates therefore share one absolute grid. Frames are instants, not intervals.
-
-**Comparing times.** A sample at `t_ns` is at or before frame `n` if and only if `t_ns × r ≤ n × 10⁹`. Times are compared in this exact integer form, because `1/r` seconds is usually not a whole number of nanoseconds.
 
 **Grid alignment.** Whole seconds are grid points at every allowed edit rate. A lower-rate grid is a subset of a higher-rate grid whenever the higher rate is a multiple of the lower one.
 
@@ -107,9 +104,9 @@ The time model defines where each frame sits in absolute time, how frames map to
 
 ### Frame contents
 
-**Sample selection.** Each stream is made from a sequence of timestamped source samples. Frame `n` shows the sample with the greatest timestamp at or before the frame instant, using the comparison from the [frame grid](#frame-grid). A sample exactly on the instant counts as at or before it. Bundles store no per-frame timing data, since the sample shown in any frame can be recomputed from the source timestamps.
+**Sample selection.** Each stream is made from a sequence of timestamped source samples, and each frame shows at most one of them. This spec does not define which sample a frame shows. The writer chooses it. Bundles store no per-frame timing data.
 
-**No-data frames.** Every stream covers the whole bundle range. A frame is a no-data frame if no sample is at or before its instant, or if the latest such sample is older than the stream's maximum hold age (`max_hold_ns` in the manifest). No-data frames are plain black in opaque streams and fully transparent in overlays. Bundles store no gap metadata, so gaps are visible only in the frame content.
+**No-data frames.** Every stream covers the whole bundle range. Frames that show no sample are plain black in opaque streams and fully transparent in overlays. Bundles store no gap metadata, so gaps are visible only in the frame content.
 
 ## Manifest
 
@@ -167,11 +164,9 @@ streams:
   front_cam:
     label: "Front camera"
     profile: "hevc-main10-420"
-    max_hold_ns: 100000000
     info: { clock_source: "ptp", timestamp_reference: "exposure_mid" }
   front_boxes:
     profile: "prores-4444"
-    max_hold_ns: 100000000
     overlay_of: "front_cam"
 ```
 
@@ -179,7 +174,6 @@ streams:
 | --- | --- | --- |
 | `label` | No | Human-readable name for display |
 | `profile` | Yes | [Encoding profile](#encoding-profiles) |
-| `max_hold_ns` | Yes | [Maximum hold age](#frame-contents) in nanoseconds |
 | `overlay_of` | No | Base stream ID, for overlays only |
 | `alpha_mode` | No | `"straight"` (default) or `"premultiplied"`, for overlays only |
 | `info` | No | Mapping of any structure, whose contents this spec does not define |

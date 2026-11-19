@@ -6,8 +6,18 @@ Multireel is a multimodal rendering framework for video editing. The project is 
 
 - `src/multireel/`: the library (src layout, built with hatchling; ships `py.typed`).
 - `tests/`: pytest tests (`test_*.py`).
-- `docs/`: [zensical](https://zensical.org) site (configured via `mkdocs.yml`); the API reference is generated from docstrings via mkdocstrings (`docs/api.md`). Add new pages to `nav` in `mkdocs.yml`.
+- `docs/`: [zensical](https://zensical.org) site (configured via `mkdocs.yml`); the API reference is generated from docstrings via mkdocstrings (`docs/api/`, one page per top-level module). Add new pages to `nav` in `mkdocs.yml`.
 - `docs/spec.md`: the bundle format spec (video format, time model, manifest). Code that reads or writes bundles must follow it.
+
+## Architecture
+
+- `bundle/`: the bundle format as code (`video`, `timing`, `manifest`, mirroring the spec's sections). Pure data types and functions; implementation defaults do not belong here.
+- `write.py`: `Stream` (an [abstract dataloader](https://radarml.github.io/abstract-dataloader/) `Sensor` plus a render function) and `write_bundle`.
+- `encode.py`: `ffmpeg` encoding.
+- `validate/`: `checks` (rules; returns a list of `Violation`s), `probe` (`ffprobe` reading), and `cli` (the `multireel-validate` command).
+- `tests/synthetic.py`: synthetic sensors and pattern frames with known ground truth, for end-to-end tests.
+
+Encoding and validation use the `ffmpeg`/`ffprobe` on `PATH`. Keep things simple: use built-in exceptions (`ValueError`, `RuntimeError`) unless a caller needs to catch a specific case, and avoid defensive layers that nothing uses yet.
 
 ## Conventions
 
