@@ -64,14 +64,10 @@ import numpy as np
 from abstract_dataloader import spec
 from jaxtyping import Float64, Int64, UInt8
 
-from .bundle.manifest import (
-    Manifest,
-    StreamEntry,
-    stream_path,
-)
+from .bundle.manifest import Manifest, StreamEntry
 from .bundle.timing import Timecode
-from .bundle.video import Profile, clip_name, reel_name
-from .encode import ChannelOrder, EncodeOptions, Encoder, StreamFormat
+from .bundle.video import Profile
+from .encode import EncodeOptions, Encoder, StreamFormat
 from .validate.checks import validate_stream
 
 TSample = TypeVar("TSample")
@@ -102,7 +98,9 @@ class Stream:
         alpha_mode: how the frames' alpha is stored, for overlays.
         info: free-form mapping stored in the manifest.
         channel_order: order of the color channels in frames, `rgb` or
-            `bgr`.
+            `bgr`. Alpha, if any, always comes last. `bgr` suits sources
+            such as OpenCV, which decode to BGR, and saves reordering the
+            channels before encoding.
     """
 
     timestamps: Float64[np.ndarray, "N"]
@@ -114,7 +112,7 @@ class Stream:
     overlay_of: str | None = None
     alpha_mode: Literal["straight", "premultiplied"] = "straight"
     info: Mapping[str, Any] = field(default_factory=dict)
-    channel_order: ChannelOrder = "rgb"
+    channel_order: Literal["rgb", "bgr"] = "rgb"
 
     @classmethod
     def from_sensor(
@@ -306,13 +304,13 @@ def write_bundle(
         shown[kept] = sample_indices
 
         stream = streams[stream_id]
-        file = stream_path(path, stream_id)
+        file = Manifest.stream_path(path, stream_id)
         _encode(file, stream, shown, StreamFormat(
             width=0, height=0, profile=stream.profile, edit_rate=edit_rate,
             keyframe_interval=manifest.keyframe_interval,
             start_timecode=start_timecode,
-            reel_name=reel_name(recording_id, stream_id),
-            clip_name=clip_name(recording_id, stream_id, stream.label),
+            reel_name=manifest.reel_name(stream_id),
+            clip_name=manifest.clip_name(stream_id),
             channel_order=stream.channel_order,
         ), options, _counter(counts, stream_ids.index(stream_id)))
 

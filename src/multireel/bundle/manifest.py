@@ -1,4 +1,4 @@
-"""Manifest: the `manifest.yaml` schema, reading and writing."""
+"""Manifest: the `manifest.yaml` schema, and stream file paths and names."""
 
 import os
 import tempfile
@@ -13,11 +13,6 @@ import yaml
 
 from .timing import Timecode
 from .video import Profile
-
-
-def stream_path(bundle: Path, stream_id: str) -> Path:
-    """Return the path of a stream file, `streams/<stream_id>.mov`."""
-    return bundle / "streams" / f"{stream_id}.mov"
 
 
 @dataclass(frozen=True)
@@ -67,6 +62,23 @@ class Manifest:
     streams: Mapping[str, StreamEntry]
     provenance: Any = None
     schema_version: str = "1.0"
+
+    @staticmethod
+    def stream_path(bundle: Path, stream_id: str) -> Path:
+        """Return the path of a stream file, `streams/<stream_id>.mov`."""
+        return bundle / "streams" / f"{stream_id}.mov"
+
+    def reel_name(self, stream_id: str) -> str:
+        """Return the reel name of a stream, `<recording_id>.<stream_id>`."""
+        return f"{self.recording_id}.{stream_id}"
+
+    def clip_name(self, stream_id: str) -> str:
+        """Return the clip name of a stream, `<recording_id> <label>`.
+
+        The stream ID is used in place of the label if there is none.
+        """
+        label = self.streams[stream_id].label
+        return f"{self.recording_id} {label or stream_id}"
 
     @classmethod
     def read(cls, bundle: Path) -> "Manifest":

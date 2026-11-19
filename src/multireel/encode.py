@@ -17,13 +17,6 @@ from functools import cache
 from pathlib import Path
 from typing import Literal
 
-ChannelOrder = Literal["rgb", "bgr"]
-"""Order of the color channels in input frames.
-
-Alpha, if any, always comes last. `bgr` suits sources such as OpenCV, which
-decode to BGR, and saves reordering the channels before encoding.
-"""
-
 import numpy as np
 from jaxtyping import UInt8
 
@@ -74,7 +67,7 @@ class StreamFormat:
     start_timecode: Timecode
     reel_name: str
     clip_name: str
-    channel_order: ChannelOrder = "rgb"
+    channel_order: Literal["rgb", "bgr"] = "rgb"
 
 
 @cache

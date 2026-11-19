@@ -2,6 +2,8 @@ site_name: Multireel
 site_url: https://radarml.github.io/multireel
 repo_url: https://github.com/RadarML/multireel
 repo_name: RadarML/multireel
+# The python_xref handler's `paths` is not watched automatically.
+watch: [src]
 nav:
   - Home: index.md
   - Bundle Spec: spec.md

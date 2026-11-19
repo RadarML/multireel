@@ -1,4 +1,4 @@
-"""Video format: encoding profiles and container naming rules."""
+"""Video format: encoding profiles."""
 
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -17,7 +17,7 @@ ProfileName = Literal[
 class Profile:
     """Codec properties of a stream: a standard profile, or a custom one.
 
-    Use [`from_name`][^.] for the standard profiles in the spec.
+    Use [`from_name`][.from_name] for the standard profiles in the spec.
 
     Attributes:
         codec: codec family.
@@ -93,16 +93,3 @@ _STANDARD: dict[ProfileName, Profile] = {
     "prores-422-hq": Profile("prores", "422", 10, False, "hq"),
     "prores-4444": Profile("prores", "444", 12, True, "4444"),
 }
-
-
-def reel_name(recording_id: str, stream_id: str) -> str:
-    """Return the reel name of a stream, `<recording_id>.<stream_id>`."""
-    return f"{recording_id}.{stream_id}"
-
-
-def clip_name(recording_id: str, stream_id: str, label: str | None) -> str:
-    """Return the clip name of a stream, `<recording_id> <label>`.
-
-    The stream ID is used in place of the label if there is none.
-    """
-    return f"{recording_id} {label or stream_id}"

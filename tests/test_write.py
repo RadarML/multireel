@@ -30,7 +30,6 @@ from multireel import (
     Stream,
     write_bundle,
 )
-from multireel.bundle.manifest import stream_path
 from multireel.bundle.video import ProfileName
 from multireel.validate import checks, validate_stream
 
@@ -60,7 +59,7 @@ def check_frames(
         first = next(stream.frames(np.array([0])))
         height, width = first.shape[:2]
         frames = read_frames(
-            stream_path(path, stream_id), width, height, alpha)
+            Manifest.stream_path(path, stream_id), width, height, alpha)
         assert [decode_pattern(f) for f in frames] == expected[stream_id]
         if alpha:
             no_data = [f for f, e in zip(frames, expected[stream_id])
@@ -180,7 +179,7 @@ def test_bgr_channel_order(tmp_path: Path, name: ProfileName) -> None:
                  recording_id="drive_0423_a", timecode_origin=ORIGIN)
     decoded = {}
     for k in streams:
-        frames = read_frames(stream_path(tmp_path, k), 128, 64, alpha)
+        frames = read_frames(Manifest.stream_path(tmp_path, k), 128, 64, alpha)
         decoded[k] = frames[len(frames) // 2]
     assert np.array_equal(decoded["rgb"], decoded["bgr"])
     assert np.abs(decoded["rgb"][32, 64, :3].astype(int) - rgb).max() <= 4
@@ -192,7 +191,7 @@ def test_verify_decode(
     """Without `decode`, stream validation does not decode frames."""
     manifest, _, _ = write_sample(tmp_path)
     monkeypatch.setattr(checks, "decode_errors", lambda *a, **k: ["broken"])
-    file = stream_path(tmp_path, "cam")
+    file = Manifest.stream_path(tmp_path, "cam")
     assert validate_stream(file, "cam", manifest) == ["decode: broken"]
     assert validate_stream(file, "cam", manifest, decode=False) == []
 

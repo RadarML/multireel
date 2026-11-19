@@ -11,7 +11,6 @@ import pytest
 from synthetic import ORIGIN, sample_sensors, sample_streams, sample_sync
 
 from multireel import Manifest, write_bundle
-from multireel.bundle.manifest import stream_path
 from multireel.validate import validate_stream
 from multireel.validate.checks import check_stream
 from multireel.validate.probe import StreamProbe, probe
@@ -60,7 +59,7 @@ STREAM_VIOLATIONS: dict[str, Callable[[StreamProbe], dict[str, Any]]] = {
 def test_stream_violation(bundle: Path, rule: str) -> None:
     """Each crafted stream property breaks exactly the expected rule."""
     manifest = Manifest.read(bundle)
-    good = probe(stream_path(bundle, "cam"))
+    good = probe(Manifest.stream_path(bundle, "cam"))
     assert check_stream(good, "cam", manifest) == []
     bad = replace(good, **STREAM_VIOLATIONS[rule](good))
     assert any(m.startswith(f"{rule}: ")
@@ -71,7 +70,7 @@ def test_decode_violation(bundle: Path, tmp_path: Path) -> None:
     """A stream file with corrupted frame data breaks the `decode` rule."""
     manifest = Manifest.read(bundle)
     file = tmp_path / "cam.mov"
-    shutil.copy(stream_path(bundle, "cam"), file)
+    shutil.copy(Manifest.stream_path(bundle, "cam"), file)
     assert validate_stream(file, "cam", manifest) == []
     data = bytearray(file.read_bytes())
     start = data.find(b"mdat") + 64
@@ -86,7 +85,7 @@ def test_decode_violation(bundle: Path, tmp_path: Path) -> None:
 def test_prores_level_violation(bundle: Path) -> None:
     """A ProRes stream with another level's sample entry breaks `profile`."""
     manifest = Manifest.read(bundle)
-    good = probe(stream_path(bundle, "lidar"))
+    good = probe(Manifest.stream_path(bundle, "lidar"))
     assert check_stream(good, "lidar", manifest) == []
     tracks = [("video", "apcs"), ("data", "tmcd")]
     assert any(m.startswith("profile: ") for m in check_stream(

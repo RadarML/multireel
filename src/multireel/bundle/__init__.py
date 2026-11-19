@@ -1,21 +1,24 @@
 """The bundle format as code.
 
-This package holds the data types, constants and pure functions defined by
-the bundle spec. Its modules follow the sections of the spec:
+Data types and pure functions for the parts of the
+[bundle spec][?multireel-bundle-spec] that code needs to read or write:
 
-- `video`: encoding profiles and container naming rules.
-- `timing`: frame grid and timecode. Frame indices are absolute, so frame
-    `n` at edit rate `r` sits at `n/r` seconds since the UTC epoch.
-- `manifest`: the `manifest.yaml` schema, reading and writing.
+- [`Profile`][.Profile]: the codec configuration of a stream, as in
+    [encoding profiles][?encoding-profiles]. Use
+    [`Profile.from_name`][.Profile.from_name] for a standard profile, named
+    by a [`ProfileName`][.ProfileName].
+- [`Timecode`][.Timecode]: non-drop-frame [timecode][?timecode] on the
+    [frame grid][?frame-grid]. Frame indices are absolute, so frame `n` at
+    edit rate `r` sits at `n/r` seconds since the UTC epoch.
+- [`Manifest`][.Manifest] and [`StreamEntry`][.StreamEntry]: the
+    [manifest][?manifest], read with [`Manifest.read`][.Manifest.read] and
+    written with [`Manifest.write`][.Manifest.write]. `Manifest` also gives
+    each stream's file path and its reel and clip [names][?container].
 """
 
-from .manifest import (
-    Manifest,
-    StreamEntry,
-    stream_path,
-)
+from .manifest import Manifest, StreamEntry
 from .timing import Timecode
-from .video import Profile, ProfileName, clip_name, reel_name
+from .video import Profile, ProfileName
 
 __all__ = [
     "Manifest",
@@ -23,7 +26,4 @@ __all__ = [
     "ProfileName",
     "StreamEntry",
     "Timecode",
-    "clip_name",
-    "reel_name",
-    "stream_path",
 ]

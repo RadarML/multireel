@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 
 from ..bundle.manifest import Manifest
-from ..bundle.video import clip_name, reel_name
 from .probe import StreamProbe, decode_errors, probe
 
 PRORES_TAGS = {
@@ -104,12 +103,11 @@ def check_stream(
             colr.full_range):
         fail("colr-tag", f"colr atom is {colr}.")
 
-    expected_reel = reel_name(manifest.recording_id, stream_id)
+    expected_reel = manifest.reel_name(stream_id)
     if probe.reel_name != expected_reel:
         fail("reel-name", f"Reel name {probe.reel_name!r}, not "
              f"{expected_reel!r}.")
-    expected_clip = clip_name(
-        manifest.recording_id, stream_id, manifest.streams[stream_id].label)
+    expected_clip = manifest.clip_name(stream_id)
     if probe.tags.get("title") != expected_clip:
         fail("clip-name", f"Clip name {probe.tags.get('title')!r}, not "
              f"{expected_clip!r}.")
