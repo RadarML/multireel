@@ -137,7 +137,8 @@ class Encoder:
             else "rgb24", "-s", f"{format.width}x{format.height}",
             "-framerate", str(format.edit_rate), "-i", "-",
             "-vf", f"scale=out_color_matrix=bt709:out_range=tv,"
-            f"format={pix_fmt}",
+            f"format={pix_fmt},setparams=color_primaries=bt709:"
+            "color_trc=bt709:colorspace=bt709:range=tv",
             *codec,
             "-color_primaries", "bt709", "-color_trc", "bt709",
             "-colorspace", "bt709", "-color_range", "tv",
