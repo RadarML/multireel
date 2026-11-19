@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "multireel"
+version = "0.1.0"
+authors = [
+  { name="Tianshu Huang", email="tianshu2@andrew.cmu.edu" },
+]
+description = "A multimodal rendering framework for video editing"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+    "Operating System :: OS Independent"
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+dependencies = []
+
+[project.optional-dependencies]
+docs = [
+    "zensical >= 0.1.1",
+    "mkdocstrings-python >= 2.0.11",
+    "mkdocstrings-python-xref >= 2.1.1",
+    "ruff >= 0.11.0"
+]
+dev = [
+    "pre-commit >= 4.0.0",
+    "pytest >= 8.0.0",
+    "coverage",
+    "pytest-cov",
+    "pyright >= 1.0.0",
+    "ruff >= 0.11.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/RadarML/multireel"
+Documentation = "https://radarml.github.io/multireel"
+Issues = "https://github.com/RadarML/multireel/issues"
+
+[tool.ruff]
+line-length = 80
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "N", "I", "D", "NPY"
+]
+ignore = [
+    "D102",  # Inheriting docstrings is allowed
+    "D107",  # Initializer goes in the class docstring
+    "D401",  # "Imperative mood" NLP doesn't always make sense
+    "D413",  # No blank lines after section is preferred by mkdocstrings
+    "E402",  # Module level imports sometimes need to occur after configuration
+    "F722",  # Jaxtyping annotations confuse ruff
+    "F821",
+
+    # Must pick one...
+    "D213",  # Pick 'multi-line-summary-first-line'.
+    "D203",  # Pick `no-blank-line-before-class`.
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+
+[tool.coverage.report]
+exclude_also = [
+    '^\s*\.\.\.\s*$',
+    'def __repr__',
+    'if __name__ == .__main__.:',
+    'class .*\bProtocol\):',
+    'raise NotImplementedError',
+]
