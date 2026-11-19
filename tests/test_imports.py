@@ -13,7 +13,6 @@ MODULES = [
     "multireel.encode",
     "multireel.validate",
     "multireel.validate.checks",
-    "multireel.validate.cli",
     "multireel.validate.probe",
     "multireel.write",
 ]

@@ -1,8 +1,8 @@
 """Encoding rendered frames into stream files with `ffmpeg`.
 
 HEVC profiles use `libx265` or `hevc_nvenc`, and ProRes profiles use
-`prores_ks`. Frames are piped to an `ffmpeg` subprocess as raw video, and
-converted to BT.709 limited-range YUV by `ffmpeg`.
+`prores_ks`. Frames are piped to an `ffmpeg` subprocess as raw 8-bit RGB(A)
+or BGR(A) video, and converted to BT.709 limited-range YUV by `ffmpeg`.
 
 The encoder name, version and settings are stored in the file's metadata
 under `multireel_encoder`, `multireel_encoder_version` and
@@ -16,6 +16,13 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Literal
+
+ChannelOrder = Literal["rgb", "bgr"]
+"""Order of the color channels in input frames.
+
+Alpha, if any, always comes last. `bgr` suits sources such as OpenCV, which
+decode to BGR, and saves reordering the channels before encoding.
+"""
 
 import numpy as np
 from jaxtyping import UInt8
@@ -56,6 +63,7 @@ class StreamFormat:
         start_timecode: timecode of the first frame.
         reel_name: reel name.
         clip_name: clip name.
+        channel_order: order of the color channels in input frames.
     """
 
     width: int
@@ -66,6 +74,7 @@ class StreamFormat:
     start_timecode: Timecode
     reel_name: str
     clip_name: str
+    channel_order: ChannelOrder = "rgb"
 
 
 @cache
@@ -130,11 +139,13 @@ class Encoder:
         self.shape = (format.height, format.width, self.channels)
 
         name, pix_fmt, codec = _codec_args(format, options)
+        in_pix_fmt = format.channel_order + (
+            "a" if self.channels == 4 else "24")
         version = _ffmpeg_version(options.ffmpeg)
         args = [
             options.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "rawvideo", "-pix_fmt", "rgba" if self.channels == 4
-            else "rgb24", "-s", f"{format.width}x{format.height}",
+            "-f", "rawvideo", "-pix_fmt", in_pix_fmt,
+            "-s", f"{format.width}x{format.height}",
             "-framerate", str(format.edit_rate), "-i", "-",
             "-vf", f"scale=out_color_matrix=bt709:out_range=tv,"
             f"format={pix_fmt},setparams=color_primaries=bt709:"
@@ -157,7 +168,8 @@ class Encoder:
     def write(self, frame: UInt8[np.ndarray, "H W C"], count: int = 1) -> None:
         """Write a frame, repeated `count` times.
 
-        Frames are 8-bit RGB, or RGBA if the profile has alpha.
+        Frames are 8-bit, in the stream's channel order, with alpha last
+        if the profile has alpha.
 
         Repeats are how held samples and runs of no-data frames are written.
 

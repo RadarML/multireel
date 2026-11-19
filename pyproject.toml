@@ -28,9 +28,6 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
-[project.scripts]
-multireel-validate = "multireel.validate.cli:main"
-
 [project.optional-dependencies]
 docs = [
     "zensical >= 0.1.1",

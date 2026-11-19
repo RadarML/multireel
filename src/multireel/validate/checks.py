@@ -1,29 +1,16 @@
-"""The rules of the bundle spec, and checking bundles against them."""
+"""The per-stream rules of the bundle spec, and checking stream files."""
 
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Literal, get_args
 
-import yaml
-
-from ..bundle.manifest import Manifest, read_manifest, stream_path
-from ..bundle.timing import Timecode
+from ..bundle.manifest import Manifest
 from ..bundle.video import Profile, clip_name, profile_info, reel_name
 from .probe import StreamProbe, decode_errors, probe
 
 Rule = Literal[
-    # Manifest
-    "manifest-present",
-    "manifest-yaml",
-    "schema-version",
-    "manifest-fields",
-    "stream-id",
-    "timecode-origin",
-    "timecode-range",
-    "overlay-link",
-    # Video format
     "profile",
     "edit-rate",
     "constant-frame-rate",
@@ -43,9 +30,8 @@ Rule = Literal[
     "clip-name",
     "encoder-metadata",
     "decode",
-    "overlay-match",
 ]
-"""A rule from the bundle spec, one per MUST.
+"""A per-stream rule from the bundle spec, one per MUST.
 
 `no-b-frames` also covers closed GOPs: without reordering, no HEVC frame can
 reference a frame before the keyframe that starts its GOP, and ProRes is
@@ -60,12 +46,12 @@ class Violation:
     Attributes:
         rule: rule that was broken.
         message: what was found.
-        stream: stream ID, or `None` for bundle-level rules.
+        stream: stream ID.
     """
 
     rule: Rule
     message: str
-    stream: str | None = None
+    stream: str
 
 
 def check_stream(
@@ -174,139 +160,31 @@ def validate_stream(
     *,
     ffmpeg: str = "ffmpeg",
     ffprobe: str = "ffprobe",
+    decode: bool = True,
 ) -> list[Violation]:
     """Check one stream file against the spec and its manifest.
 
     The manifest does not need to be written yet, so the writer can check
     each stream before finalizing a bundle.
 
+    Args:
+        path: stream file.
+        stream_id: ID of the stream in `manifest`.
+        manifest: manifest of the bundle the stream belongs to.
+        ffmpeg: `ffmpeg` executable.
+        ffprobe: `ffprobe` executable.
+        decode: also decode every frame to check the `decode` rule. This
+            takes most of the time; without it, only the container, stream
+            and packet properties are checked.
+
     Returns:
         Every failed check; empty if the stream is valid.
     """
-    return _validate_file(path, stream_id, manifest, ffmpeg, ffprobe)[1]
-
-
-def _validate_file(
-    path: Path, stream_id: str, manifest: Manifest, ffmpeg: str, ffprobe: str
-) -> tuple[StreamProbe | None, list[Violation]]:
-    """Probe, check and decode one stream file."""
     try:
         properties = probe(path, ffprobe)
     except (subprocess.CalledProcessError, ValueError) as e:
-        return None, [
-            Violation("decode", f"Cannot read {path}: {e}", stream_id)]
+        return [Violation("decode", f"Cannot read {path}: {e}", stream_id)]
     violations = check_stream(properties, stream_id, manifest)
-    if errors := decode_errors(path, ffmpeg):
+    if decode and (errors := decode_errors(path, ffmpeg)):
         violations.append(Violation("decode", "; ".join(errors), stream_id))
-    return properties, violations
-
-
-def _check_manifest_document(data: Any) -> list[Violation]:
-    """Check that a parsed manifest has every required field."""
-    required = {
-        "bundle_id": str, "recording_id": str, "timecode_origin": str,
-        "edit_rate": int, "keyframe_interval": int, "start_timecode": str,
-        "frame_count": int, "streams": dict}
-    violations = [
-        Violation("manifest-fields", f"{key} is missing or not a {kind}.")
-        for key, kind in required.items()
-        if not isinstance(data.get(key), kind)]
-    for stream_id, entry in (data.get("streams") or {}).items():
-        if not isinstance(entry, dict) or not isinstance(
-                entry.get("profile"), str):
-            violations.append(Violation(
-                "manifest-fields", "profile is missing or not a str.",
-                str(stream_id)))
-    return violations
-
-
-def validate_bundle(
-    path: str | Path,
-    *,
-    ffmpeg: str = "ffmpeg",
-    ffprobe: str = "ffprobe",
-) -> list[Violation]:
-    """Check a bundle against the spec.
-
-    Returns:
-        Every failed check; empty if the bundle is valid.
-    """
-    path = Path(path)
-    file = path / "manifest.yaml"
-    if not file.exists():
-        return [Violation("manifest-present", f"{file} does not exist.")]
-
-    try:
-        text = file.read_bytes().decode("utf-8")
-        documents = list(yaml.safe_load_all(text))
-        tokens = list(yaml.scan(text))
-    except (UnicodeDecodeError, yaml.YAMLError) as e:
-        return [Violation("manifest-yaml", str(e))]
-    if len(documents) != 1 or not isinstance(documents[0], dict):
-        return [Violation("manifest-yaml", "Not a single YAML mapping.")]
-    violations = [
-        Violation("manifest-yaml", f"Uses {type(token).__name__}.")
-        for token in tokens
-        if isinstance(token, (yaml.AnchorToken, yaml.AliasToken,
-                              yaml.TagToken))]
-
-    data = documents[0]
-    version = data.get("schema_version")
-    if not isinstance(version, str) or version.split(".")[0] != "1":
-        return [*violations, Violation(
-            "schema-version", f"Unknown schema version {version!r}.")]
-    violations += _check_manifest_document(data)
-    if violations:
-        return violations
-    try:
-        manifest = read_manifest(path)
-    except ValueError as e:
-        return [Violation("manifest-fields", str(e))]
-
-    origin = manifest.timecode_origin
-    if origin.tzinfo is None or origin.microsecond:
-        violations.append(Violation(
-            "timecode-origin", f"{origin} is not a whole number of seconds."))
-    else:
-        last = manifest.start_timecode.to_frame(origin) + (
-            manifest.frame_count - 1)
-        try:
-            Timecode.from_frame(last, manifest.edit_rate, origin)
-        except ValueError as e:
-            violations.append(Violation("timecode-range", str(e)))
-    if manifest.edit_rate not in (10, 15, 24, 25, 30, 50, 60):
-        violations.append(Violation(
-            "edit-rate", f"{manifest.edit_rate} is not an allowed rate."))
-
-    probes: dict[str, StreamProbe] = {}
-    for stream_id, entry in manifest.streams.items():
-        base = entry.overlay_of
-        if base is not None and (
-                base not in manifest.streams
-                or manifest.streams[base].overlay_of is not None):
-            violations.append(Violation(
-                "overlay-link", f"{base!r} is not a stream that is not an "
-                "overlay.", stream_id))
-        file = stream_path(path, stream_id)
-        if re.fullmatch(r"[a-z0-9_-]+", stream_id) is None or (
-                not file.exists()):
-            violations.append(Violation(
-                "stream-id", f"Invalid ID, or {file} is missing.", stream_id))
-            continue
-        properties, found = _validate_file(
-            file, stream_id, manifest, ffmpeg, ffprobe)
-        violations += found
-        if properties is not None:
-            probes[stream_id] = properties
-
-    for stream_id, entry in manifest.streams.items():
-        overlay, base = probes.get(stream_id), probes.get(
-            entry.overlay_of or "")
-        if overlay is not None and base is not None and (
-                (overlay.width, overlay.height, len(overlay.durations))
-                != (base.width, base.height, len(base.durations))):
-            violations.append(Violation(
-                "overlay-match", "Dimensions or frame count differ from "
-                f"{entry.overlay_of!r}.", stream_id))
-
     return violations

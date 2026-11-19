@@ -1,4 +1,4 @@
-"""Tests for the validator: one crafted violation per rule."""
+"""Tests for stream validation: one crafted violation per rule."""
 
 import shutil
 from collections.abc import Callable
@@ -8,14 +8,12 @@ from typing import Any, get_args
 
 import numpy as np
 import pytest
-import yaml
 from synthetic import ORIGIN, sample_sensors, sample_streams, sample_sync
 
-from multireel import read_manifest, validate_bundle, write_bundle
+from multireel import read_manifest, write_bundle
 from multireel.bundle.manifest import stream_path
-from multireel.validate import Rule
+from multireel.validate import Rule, validate_stream
 from multireel.validate.checks import check_stream
-from multireel.validate.cli import main
 from multireel.validate.probe import StreamProbe, probe
 
 
@@ -27,18 +25,6 @@ def bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
         path, sample_streams(sample_sensors()), sample_sync(),
         recording_id="drive_0423_a", timecode_origin=ORIGIN)
     return path
-
-
-@pytest.fixture
-def copy(bundle: Path, tmp_path: Path) -> Path:
-    """A copy of the sample bundle that a test may break."""
-    shutil.copytree(bundle, tmp_path / "bundle")
-    return tmp_path / "bundle"
-
-
-def test_valid(bundle: Path) -> None:
-    """The sample bundle is valid."""
-    assert validate_bundle(bundle) == []
 
 
 def _without_encoder(p: StreamProbe) -> dict[str, Any]:
@@ -80,57 +66,21 @@ def test_stream_violation(bundle: Path, rule: Rule) -> None:
     assert rule in {v.rule for v in check_stream(bad, "cam", manifest)}
 
 
-def _edit_manifest(path: Path, edit: Callable[[dict], None]) -> None:
-    file = path / "manifest.yaml"
-    data = yaml.safe_load(file.read_text())
-    edit(data)
-    file.write_text(yaml.safe_dump(data, sort_keys=False))
-
-
-def _corrupt(file: Path) -> None:
-    """Overwrite part of the frame data with noise."""
+def test_decode_violation(bundle: Path, tmp_path: Path) -> None:
+    """A stream file with corrupted frame data breaks the `decode` rule."""
+    manifest = read_manifest(bundle)
+    file = tmp_path / "cam.mov"
+    shutil.copy(stream_path(bundle, "cam"), file)
+    assert validate_stream(file, "cam", manifest) == []
     data = bytearray(file.read_bytes())
     start = data.find(b"mdat") + 64
     data[start:start + 2000] = np.random.default_rng(0).integers(
         0, 256, 2000, dtype=np.uint8).tobytes()
     file.write_bytes(bytes(data))
-
-
-BUNDLE_VIOLATIONS: dict[Rule, Callable[[Path], object]] = {
-    "manifest-present": lambda b: (b / "manifest.yaml").unlink(),
-    "manifest-yaml": lambda b: (b / "manifest.yaml").write_text(
-        (b / "manifest.yaml").read_text() + "extra: &a 1\nmore: *a\n"),
-    "schema-version": lambda b: _edit_manifest(
-        b, lambda d: d.update(schema_version="2.0")),
-    "manifest-fields": lambda b: _edit_manifest(
-        b, lambda d: d.pop("frame_count")),
-    "stream-id": lambda b: stream_path(b, "radar").unlink(),
-    "timecode-origin": lambda b: _edit_manifest(
-        b, lambda d: d.update(timecode_origin="2026-11-18T16:00:00.5Z")),
-    "timecode-range": lambda b: _edit_manifest(
-        b, lambda d: d.update(frame_count=30 * 3600 * 23)),
-    "overlay-link": lambda b: _edit_manifest(
-        b, lambda d: d["streams"]["boxes"].update(overlay_of="nope")),
-    "overlay-match": lambda b: _edit_manifest(
-        b, lambda d: d["streams"]["boxes"].update(overlay_of="radar")),
-    "decode": lambda b: _corrupt(stream_path(b, "cam")),
-}
-
-
-@pytest.mark.parametrize("rule", list(BUNDLE_VIOLATIONS))
-def test_bundle_violation(copy: Path, rule: Rule) -> None:
-    """Each crafted bundle breaks the expected rule."""
-    BUNDLE_VIOLATIONS[rule](copy)
-    assert rule in {v.rule for v in validate_bundle(copy)}
+    assert "decode" in {
+        v.rule for v in validate_stream(file, "cam", manifest)}
 
 
 def test_every_rule_is_tested() -> None:
     """Every rule has a crafted violation."""
-    assert set(STREAM_VIOLATIONS) | set(BUNDLE_VIOLATIONS) == set(
-        get_args(Rule))
-
-
-def test_cli(bundle: Path, tmp_path: Path) -> None:
-    """The command exits with 0 for a valid bundle, and 1 otherwise."""
-    assert main([str(bundle)]) == 0
-    assert main([str(tmp_path)]) == 1
+    assert set(STREAM_VIOLATIONS) | {"decode"} == set(get_args(Rule))

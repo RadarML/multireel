@@ -61,7 +61,7 @@ plugins:
       - api/bundle.md: Bundle format types and functions
       - api/write.md: Writing bundles from sensors
       - api/encode.md: Encoding stream files with ffmpeg
-      - api/validate.md: Checking bundles against the spec
+      - api/validate.md: Checking stream files against the spec
 - mkdocstrings:
     default_handler: python_xref
     handlers:
