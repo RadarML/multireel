@@ -27,13 +27,6 @@ from .validate import validate_stream
 FRAME_CLOCK = "__multireel_frame_clock__"
 """Key of the bundle's frame instants in the synchronization's input."""
 
-PROGRESS_INTERVAL = 0.2
-"""Seconds between progress callbacks."""
-
-Progress = Callable[[Mapping[str, int], int], None]
-"""Progress callback: frames written so far per stream ID, and the number of
-frames in every stream."""
-
 
 class BundleWriter:
     """A planned bundle, ready to be written.
@@ -178,7 +171,10 @@ class BundleWriter:
             self.shown[stream_id] = shown
 
     def write(
-        self, workers: int | None = None, progress: Progress | None = None
+        self,
+        workers: int | None = None,
+        progress: Callable[[Mapping[str, int], int], None] | None = None,
+        progress_interval: float = 0.2,
     ) -> Manifest:
         """Render, encode and validate every stream, then write the manifest.
 
@@ -201,13 +197,12 @@ class BundleWriter:
         Args:
             workers: number of streams written at once; defaults to all of
                 them.
-            progress: called every
-                [`PROGRESS_INTERVAL`][multireel.write.PROGRESS_INTERVAL]
-                seconds while streams are written, and once more when they
-                are all written, with the frames written so far per stream
-                and the number of frames in every stream. Frames are counted
-                when they are handed to `ffmpeg`, so validation is not
-                included.
+            progress: called every `progress_interval` seconds while streams
+                are written, and once more when they are all written, with
+                the frames written so far per stream and the number of
+                frames in every stream. Frames are counted when they are
+                handed to `ffmpeg`, so validation is not included.
+            progress_interval: seconds between `progress` calls.
 
         Returns:
             The manifest that was written.
@@ -248,7 +243,7 @@ class BundleWriter:
                     child.close()
                     running[process.sentinel] = (stream_id, process, parent)
 
-                ready = wait(list(running), timeout=PROGRESS_INTERVAL)
+                ready = wait(list(running), timeout=progress_interval)
                 self._report(progress)
                 for sentinel in ready:
                     stream_id, process, conn = running.pop(sentinel)
@@ -280,7 +275,9 @@ class BundleWriter:
         self.manifest.write(self.path)
         return self.manifest
 
-    def _report(self, progress: Progress | None) -> None:
+    def _report(
+        self, progress: Callable[[Mapping[str, int], int], None] | None
+    ) -> None:
         """Pass the frames written so far to the progress callback."""
         if progress is not None:
             progress(

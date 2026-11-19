@@ -43,7 +43,8 @@ def write_sample(
     streams = sample_streams(sensors, scale)
     kwargs.setdefault("timecode_origin", ORIGIN)
     write_kwargs = {
-        k: kwargs.pop(k) for k in ("workers", "progress") if k in kwargs}
+        k: kwargs.pop(k)
+        for k in ("workers", "progress", "progress_interval") if k in kwargs}
     manifest = BundleWriter(
         path, streams, sample_sync(), recording_id="drive_0423_a",
         edit_rate=edit_rate, **kwargs).write(**write_kwargs)
@@ -121,8 +122,9 @@ def test_progress(tmp_path: Path) -> None:
     """Progress counts every frame of every stream, without going back."""
     calls: list[tuple[dict[str, int], int]] = []
     manifest, _, streams = write_sample(
-        tmp_path,
+        tmp_path, progress_interval=0.01,
         progress=lambda done, total: calls.append((dict(done), total)))
+    assert len(calls) > 2
     assert all(total == manifest.frame_count for _, total in calls)
     assert calls[-1][0] == dict.fromkeys(streams, manifest.frame_count)
     for before, after in zip(calls, calls[1:]):

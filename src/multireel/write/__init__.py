@@ -40,8 +40,7 @@ Writing a bundle has two steps:
     forked process: it renders the stream, encodes it with an
     [`Encoder`][.Encoder] set up by [`EncodeOptions`][.EncodeOptions], and
     checks the file with [`validate_stream`][.validate_stream]. It reports
-    [`Progress`][.Progress] every [`PROGRESS_INTERVAL`][.PROGRESS_INTERVAL]
-    seconds.
+    progress as it goes.
 
 [`validate_stream`][.validate_stream] reads a file's properties into a
 [`StreamProbe`][.StreamProbe], checks them with
@@ -53,18 +52,14 @@ from .encode import EncodeOptions, Encoder
 from .validate import StreamProbe, check_stream, decode_errors, validate_stream
 from .writer import (
     FRAME_CLOCK,
-    PROGRESS_INTERVAL,
     BundleWriter,
-    Progress,
 )
 
 __all__ = [
     "FRAME_CLOCK",
-    "PROGRESS_INTERVAL",
     "BundleWriter",
     "EncodeOptions",
     "Encoder",
-    "Progress",
     "StreamProbe",
     "check_stream",
     "decode_errors",
