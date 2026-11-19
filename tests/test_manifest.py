@@ -9,12 +9,7 @@ import pytest
 import yaml
 from synthetic import ORIGIN
 
-from multireel.bundle.manifest import (
-    Manifest,
-    StreamEntry,
-)
-from multireel.bundle.timing import Timecode
-from multireel.bundle.video import Profile
+from multireel.bundle import Manifest, Profile, StreamEntry, Timecode
 
 
 def make_manifest(**kwargs: Any) -> Manifest:
@@ -129,3 +124,22 @@ def test_unknown_profile_name(tmp_path: Path) -> None:
     path.write_text(yaml.safe_dump(data))
     with pytest.raises(ValueError, match="h264"):
         Manifest.read(tmp_path)
+
+
+@pytest.mark.parametrize("streams", [
+    {"Front Cam": StreamEntry(Profile.from_name("hevc-444"))},
+    {"boxes": StreamEntry(
+        Profile.from_name("prores-4444"), overlay_of="missing")},
+    {"a": StreamEntry(Profile.from_name("prores-4444"), overlay_of="b"),
+     "b": StreamEntry(Profile.from_name("prores-4444"), overlay_of="a")},
+])
+def test_invalid_streams(streams: dict[str, StreamEntry]) -> None:
+    """Invalid stream IDs and overlay links are a ValueError."""
+    with pytest.raises(ValueError):
+        make_manifest(streams=streams)
+
+
+def test_invalid_edit_rate() -> None:
+    """Edit rates outside the spec's list are a ValueError."""
+    with pytest.raises(ValueError, match="Edit rate"):
+        make_manifest(edit_rate=29)

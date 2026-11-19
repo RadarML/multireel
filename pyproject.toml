@@ -29,6 +29,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+matplotlib = ["matplotlib >= 3.8"]
+rich = ["rich >= 13.0"]
 docs = [
     "zensical >= 0.1.1",
     "mkdocstrings-python >= 2.0.11",
@@ -43,6 +45,7 @@ dev = [
     "pyright >= 1.0.0",
     "ruff >= 0.11.0",
     "types-pyyaml>=6.0.12.20261113",
+    "multireel[matplotlib,rich]",
 ]
 
 [project.urls]

@@ -15,13 +15,13 @@ import tempfile
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Literal
+from types import TracebackType
+from typing import Literal, Self
 
 import numpy as np
 from jaxtyping import UInt8
 
-from .bundle.timing import Timecode
-from .bundle.video import Profile
+from multireel.bundle import Manifest, Profile
 
 
 @dataclass(frozen=True)
@@ -42,32 +42,57 @@ class EncodeOptions:
     hevc_encoder: Literal["libx265", "hevc_nvenc"] = "libx265"
     quality: int = 20
 
+    def codec_args(
+        self, profile: Profile, keyframe_interval: int
+    ) -> tuple[str, str, list[str]]:
+        """Return the encoder name, input pixel format and arguments.
 
-@dataclass(frozen=True)
-class StreamFormat:
-    """Everything the encoder needs to know about one stream file.
+        Raises:
+            ValueError: if the encoder cannot produce the profile.
+        """
+        n = str(keyframe_interval)
+        q = str(self.quality)
+        chroma, depth = profile.chroma, profile.bit_depth
 
-    Attributes:
-        width: frame width, in pixels.
-        height: frame height, in pixels.
-        profile: encoding profile.
-        edit_rate: frames per second.
-        keyframe_interval: keyframe interval `N`, in frames.
-        start_timecode: timecode of the first frame.
-        reel_name: reel name.
-        clip_name: clip name.
-        channel_order: order of the color channels in input frames.
-    """
+        if profile.codec == "prores":
+            if profile.level is None:
+                raise ValueError(f"ProRes profile {profile} has no level.")
+            # ProRes is always encoded from 10-bit input; 4444 decodes as
+            # 12-bit regardless.
+            alpha = "a" if profile.alpha else ""
+            return "prores_ks", f"yuv{alpha}{chroma}p10le", [
+                "-c:v", "prores_ks", "-profile:v", profile.level,
+                "-vendor", "apl0"]
 
-    width: int
-    height: int
-    profile: Profile
-    edit_rate: int
-    keyframe_interval: int
-    start_timecode: Timecode
-    reel_name: str
-    clip_name: str
-    channel_order: Literal["rgb", "bgr"] = "rgb"
+        if profile.alpha:
+            raise ValueError("HEVC profiles cannot carry alpha.")
+
+        if self.hevc_encoder == "hevc_nvenc":
+            pix_fmt = {
+                ("420", 8): "nv12", ("420", 10): "p010le",
+                ("444", 8): "yuv444p", ("444", 10): "yuv444p16le",
+            }.get((chroma, depth))
+            if pix_fmt is None:
+                raise ValueError(
+                    f"hevc_nvenc does not support {chroma} {depth}-bit.")
+            nvenc_profile = "rext" if chroma == "444" else (
+                "main10" if depth == 10 else "main")
+            return "hevc_nvenc", pix_fmt, [
+                "-c:v", "hevc_nvenc", "-profile:v", nvenc_profile,
+                "-rc", "vbr", "-cq", q, "-b:v", "0", "-bf", "0", "-g", n,
+                "-forced-idr", "1", "-no-scenecut", "1", "-tag:v", "hvc1"]
+
+        pix_fmt = f"yuv{chroma}p" + (f"{depth}le" if depth > 8 else "")
+        x265_profile = (
+            ("main" if depth == 8 else f"main{depth}") if chroma == "420"
+            else f"main{chroma}-{depth}")
+        return "libx265", pix_fmt, [
+            "-c:v", "libx265", "-profile:v", x265_profile,
+            "-crf", q,
+            "-x265-params",
+            f"keyint={n}:min-keyint={n}:scenecut=0:bframes=0:open-gop=0"
+            ":log-level=error",
+            "-tag:v", "hvc1"]
 
 
 @cache
@@ -78,95 +103,57 @@ def _ffmpeg_version(ffmpeg: str) -> str:
     return out.stdout.split()[2]
 
 
-def _codec_args(
-    format: StreamFormat, options: EncodeOptions
-) -> tuple[str, str, list[str]]:
-    """Return the encoder name, its input pixel format, and its arguments.
-
-    Raises:
-        ValueError: if the encoder cannot produce the profile.
-    """
-    n = str(format.keyframe_interval)
-    q = str(options.quality)
-    profile = format.profile
-    chroma, depth = profile.chroma, profile.bit_depth
-
-    if profile.codec == "prores":
-        if profile.level is None:
-            raise ValueError(f"ProRes profile {profile} has no level.")
-        # ProRes is always encoded from 10-bit input; 4444 decodes as
-        # 12-bit regardless.
-        alpha = "a" if profile.alpha else ""
-        return "prores_ks", f"yuv{alpha}{chroma}p10le", [
-            "-c:v", "prores_ks", "-profile:v", profile.level,
-            "-vendor", "apl0"]
-
-    if profile.alpha:
-        raise ValueError("HEVC profiles cannot carry alpha.")
-
-    if options.hevc_encoder == "hevc_nvenc":
-        pix_fmt = {
-            ("420", 8): "nv12", ("420", 10): "p010le",
-            ("444", 8): "yuv444p", ("444", 10): "yuv444p16le",
-        }.get((chroma, depth))
-        if pix_fmt is None:
-            raise ValueError(
-                f"hevc_nvenc does not support {chroma} {depth}-bit.")
-        nvenc_profile = "rext" if chroma == "444" else (
-            "main10" if depth == 10 else "main")
-        return "hevc_nvenc", pix_fmt, [
-            "-c:v", "hevc_nvenc", "-profile:v", nvenc_profile,
-            "-rc", "vbr", "-cq", q, "-b:v", "0", "-bf", "0", "-g", n,
-            "-forced-idr", "1", "-no-scenecut", "1", "-tag:v", "hvc1"]
-
-    pix_fmt = f"yuv{chroma}p" + (f"{depth}le" if depth > 8 else "")
-    x265_profile = (
-        ("main" if depth == 8 else f"main{depth}") if chroma == "420"
-        else f"main{chroma}-{depth}")
-    return "libx265", pix_fmt, [
-        "-c:v", "libx265", "-profile:v", x265_profile,
-        "-crf", q,
-        "-x265-params",
-        f"keyint={n}:min-keyint={n}:scenecut=0:bframes=0:open-gop=0"
-        ":log-level=error",
-        "-tag:v", "hvc1"]
-
-
 class Encoder:
     """Encodes the frames of one stream into one MOV file.
 
-    Frames are written in presentation order.
+    Frames are written in presentation order. The profile, edit rate,
+    keyframe interval, start timecode, and reel and clip names come from the
+    manifest.
+
+    Use as a context manager: on leaving, the file is finalized with
+    [`close`][.close], or, if an exception was raised, `ffmpeg` is stopped with
+    [`abort`][.abort].
 
     Args:
         path: output MOV file.
-        format: stream format.
+        manifest: manifest of the bundle the stream belongs to.
+        stream_id: ID of the stream in `manifest`.
+        width: frame width, in pixels.
+        height: frame height, in pixels.
         options: encoder settings.
+        channel_order: order of the color channels in input frames.
+
+    Raises:
+        ValueError: if the encoder cannot produce the stream's profile.
     """
 
     def __init__(
-        self, path: Path, format: StreamFormat, options: EncodeOptions
+        self, path: Path, manifest: Manifest, stream_id: str, width: int,
+        height: int, options: EncodeOptions,
+        channel_order: Literal["rgb", "bgr"] = "rgb",
     ) -> None:
-        self.channels = 4 if format.profile.alpha else 3
-        self.shape = (format.height, format.width, self.channels)
+        profile = manifest.streams[stream_id].profile
+        self.channels = 4 if profile.alpha else 3
+        self.shape = (height, width, self.channels)
 
-        name, pix_fmt, codec = _codec_args(format, options)
-        in_pix_fmt = format.channel_order + (
-            "a" if self.channels == 4 else "24")
+        name, pix_fmt, codec = options.codec_args(
+            profile, manifest.keyframe_interval)
+        in_pix_fmt = channel_order + ("a" if self.channels == 4 else "24")
         version = _ffmpeg_version(options.ffmpeg)
         args = [
             options.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
             "-f", "rawvideo", "-pix_fmt", in_pix_fmt,
-            "-s", f"{format.width}x{format.height}",
-            "-framerate", str(format.edit_rate), "-i", "-",
+            "-s", f"{width}x{height}",
+            "-framerate", str(manifest.edit_rate), "-i", "-",
             "-vf", f"scale=out_color_matrix=bt709:out_range=tv,"
             f"format={pix_fmt},setparams=color_primaries=bt709:"
             "color_trc=bt709:colorspace=bt709:range=tv",
             *codec,
             "-color_primaries", "bt709", "-color_trc", "bt709",
             "-colorspace", "bt709", "-color_range", "tv",
-            "-timecode", str(format.start_timecode),
-            "-metadata:s:v:0", f"reel_name={format.reel_name}",
-            "-metadata", f"title={format.clip_name}",
+            "-timecode", str(manifest.start_timecode),
+            "-metadata:s:v:0", f"reel_name={manifest.reel_name(stream_id)}",
+            "-metadata", f"title={manifest.clip_name(stream_id)}",
             "-metadata", f"multireel_encoder={name}",
             "-metadata", f"multireel_encoder_version=ffmpeg {version}",
             "-metadata", f"multireel_encoder_settings={' '.join(codec)}",
@@ -175,6 +162,20 @@ class Encoder:
         self.stderr = tempfile.TemporaryFile()
         self.process = subprocess.Popen(
             args, stdin=subprocess.PIPE, stderr=self.stderr)
+
+    def __enter__(self) -> Self:
+        """Return this encoder."""
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None,
+        exc: BaseException | None, tb: TracebackType | None,
+    ) -> None:
+        """Finalize the file, or stop `ffmpeg` if an exception was raised."""
+        if exc_type is None:
+            self.close()
+        else:
+            self.abort()
 
     def write(self, frame: UInt8[np.ndarray, "H W C"], count: int = 1) -> None:
         """Write a frame, repeated `count` times.

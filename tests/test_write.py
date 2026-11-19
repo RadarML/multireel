@@ -1,5 +1,6 @@
 """End-to-end tests: write bundles, then decode and check every frame."""
 
+import math
 import os
 import shutil
 import subprocess
@@ -24,14 +25,14 @@ from synthetic import (
 )
 
 from multireel import (
+    BundleWriter,
     EncodeOptions,
     Manifest,
     Profile,
     Stream,
-    write_bundle,
 )
-from multireel.bundle.video import ProfileName
-from multireel.validate import checks, validate_stream
+from multireel.bundle import ProfileName
+from multireel.write import validate, validate_stream
 
 
 def write_sample(
@@ -40,10 +41,12 @@ def write_sample(
     """Write the sample bundle."""
     sensors = sample_sensors()
     streams = sample_streams(sensors, scale)
-    manifest = write_bundle(
+    kwargs.setdefault("timecode_origin", ORIGIN)
+    write_kwargs = {
+        k: kwargs.pop(k) for k in ("workers", "progress") if k in kwargs}
+    manifest = BundleWriter(
         path, streams, sample_sync(), recording_id="drive_0423_a",
-        timecode_origin=ORIGIN, edit_rate=edit_rate,
-        **kwargs)
+        edit_rate=edit_rate, **kwargs).write(**write_kwargs)
     return manifest, sensors, streams
 
 
@@ -97,19 +100,28 @@ def test_nvenc(tmp_path: Path) -> None:
     check_frames(tmp_path, manifest, sensors, streams)
 
 
-def test_processes(tmp_path: Path) -> None:
-    """Bundles written with one process per stream match threaded ones."""
-    manifest, sensors, streams = write_sample(tmp_path, processes=True)
-    assert Manifest.read(tmp_path) == manifest
-    check_frames(tmp_path, manifest, sensors, streams)
+def test_bundle_writer(tmp_path: Path) -> None:
+    """A writer plans without writing, then writes the planned manifest."""
+    sensors = sample_sensors()
+    streams = sample_streams(sensors)
+    writer = BundleWriter(
+        tmp_path / "bundle", streams, sample_sync(),
+        recording_id="drive_0423_a", timecode_origin=ORIGIN)
+    assert not (tmp_path / "bundle").exists()
+    assert set(writer.shown) == set(streams)
+    assert all(len(s) == writer.manifest.frame_count
+               for s in writer.shown.values())
+    manifest = writer.write()
+    assert manifest == writer.manifest
+    assert Manifest.read(tmp_path / "bundle") == manifest
+    check_frames(tmp_path / "bundle", manifest, sensors, streams)
 
 
-@pytest.mark.parametrize("processes", [False, True])
-def test_progress(tmp_path: Path, processes: bool) -> None:
+def test_progress(tmp_path: Path) -> None:
     """Progress counts every frame of every stream, without going back."""
     calls: list[tuple[dict[str, int], int]] = []
     manifest, _, streams = write_sample(
-        tmp_path, processes=processes,
+        tmp_path,
         progress=lambda done, total: calls.append((dict(done), total)))
     assert all(total == manifest.frame_count for _, total in calls)
     assert calls[-1][0] == dict.fromkeys(streams, manifest.frame_count)
@@ -119,8 +131,7 @@ def test_progress(tmp_path: Path, processes: bool) -> None:
 
 def test_process_workers(tmp_path: Path) -> None:
     """Fewer processes than streams still write every stream."""
-    manifest, sensors, streams = write_sample(
-        tmp_path, processes=True, workers=2)
+    manifest, sensors, streams = write_sample(tmp_path, workers=2)
     check_frames(tmp_path, manifest, sensors, streams)
 
 
@@ -134,9 +145,9 @@ def test_custom_profile(tmp_path: Path, profile: Profile) -> None:
     sensors = sample_sensors()
     streams = sample_streams(sensors)
     streams["cam"] = replace(streams["cam"], profile=profile)
-    manifest = write_bundle(
+    manifest = BundleWriter(
         tmp_path, streams, sample_sync(), recording_id="drive_0423_a",
-        timecode_origin=ORIGIN)
+        timecode_origin=ORIGIN).write()
     assert Manifest.read(tmp_path).streams["cam"].profile == profile
     check_frames(tmp_path, manifest, sensors, streams)
 
@@ -151,8 +162,11 @@ def test_unsupported_profile(tmp_path: Path, profile: Profile) -> None:
     streams = sample_streams(sensors)
     streams["cam"] = replace(streams["cam"], profile=profile)
     with pytest.raises(ValueError):
-        write_bundle(tmp_path, streams, sample_sync(),
-                     recording_id="drive_0423_a", timecode_origin=ORIGIN)
+        BundleWriter(
+            tmp_path, streams, sample_sync(),
+            recording_id="drive_0423_a", timecode_origin=ORIGIN,
+        ).write()
+    assert not (tmp_path / "streams").exists()
 
 
 @pytest.mark.parametrize("name", ["hevc-main10-420", "prores-4444"])
@@ -175,8 +189,8 @@ def test_bgr_channel_order(tmp_path: Path, name: ProfileName) -> None:
             SyntheticSensor(timestamps), lambda i: solid(rgb[::-1]),
             profile=profile, channel_order="bgr"),
     }
-    write_bundle(tmp_path, streams, sample_sync(),
-                 recording_id="drive_0423_a", timecode_origin=ORIGIN)
+    BundleWriter(tmp_path, streams, sample_sync(),
+                 recording_id="drive_0423_a", timecode_origin=ORIGIN).write()
     decoded = {}
     for k in streams:
         frames = read_frames(Manifest.stream_path(tmp_path, k), 128, 64, alpha)
@@ -190,16 +204,13 @@ def test_verify_decode(
 ) -> None:
     """Without `decode`, stream validation does not decode frames."""
     manifest, _, _ = write_sample(tmp_path)
-    monkeypatch.setattr(checks, "decode_errors", lambda *a, **k: ["broken"])
+    monkeypatch.setattr(validate, "decode_errors", lambda *a, **k: ["broken"])
     file = Manifest.stream_path(tmp_path, "cam")
     assert validate_stream(file, "cam", manifest) == ["decode: broken"]
     assert validate_stream(file, "cam", manifest, decode=False) == []
 
 
-@pytest.mark.parametrize("processes", [False, True])
-def test_failed_render_leaves_no_manifest(
-    tmp_path: Path, processes: bool
-) -> None:
+def test_failed_render_leaves_no_manifest(tmp_path: Path) -> None:
     """A render that fails part way leaves the directory without a manifest."""
     sensors = sample_sensors()
     streams = sample_streams(sensors)
@@ -214,9 +225,10 @@ def test_failed_render_leaves_no_manifest(
         sensors["thermal"].metadata.timestamps, broken,
         profile=Profile.from_name("prores-422-lt"))
     with pytest.raises(RuntimeError, match="renderer crashed"):
-        write_bundle(tmp_path, streams, sample_sync(),
-                     recording_id="drive_0423_a", timecode_origin=ORIGIN,
-                     processes=processes)
+        BundleWriter(
+            tmp_path, streams, sample_sync(),
+            recording_id="drive_0423_a", timecode_origin=ORIGIN,
+        ).write()
     assert not (tmp_path / "manifest.yaml").exists()
 
 
@@ -235,9 +247,10 @@ def test_process_exits_without_result(tmp_path: Path) -> None:
         sensors["thermal"].metadata.timestamps, dies,
         profile=Profile.from_name("prores-422-lt"))
     with pytest.raises(RuntimeError, match="'thermal' exited with code 3"):
-        write_bundle(tmp_path, streams, sample_sync(),
-                     recording_id="drive_0423_a", timecode_origin=ORIGIN,
-                     processes=True)
+        BundleWriter(
+            tmp_path, streams, sample_sync(),
+            recording_id="drive_0423_a", timecode_origin=ORIGIN,
+        ).write()
     assert not (tmp_path / "manifest.yaml").exists()
 
 
@@ -248,9 +261,8 @@ def test_existing_bundle(tmp_path: Path) -> None:
         write_sample(tmp_path)
 
 
-@pytest.mark.parametrize("processes", [False, True])
-def test_decreasing_sync(tmp_path: Path, processes: bool) -> None:
-    """A synchronization that goes backwards is rejected."""
+def test_decreasing_sync(tmp_path: Path) -> None:
+    """A synchronization that goes backwards is rejected before writing."""
     sensors = sample_sensors()
 
     def backwards(timestamps: dict) -> dict:
@@ -258,9 +270,48 @@ def test_decreasing_sync(tmp_path: Path, processes: bool) -> None:
         return {k: np.arange(n)[::-1] for k in timestamps}
 
     with pytest.raises(ValueError, match="decreasing"):
-        write_bundle(tmp_path, sample_streams(sensors), backwards,
+        BundleWriter(
+            tmp_path, sample_streams(sensors), backwards,
+            recording_id="drive_0423_a", timecode_origin=ORIGIN,
+        ).write()
+    assert not (tmp_path / "streams").exists()
+
+
+def test_no_samples_shown(tmp_path: Path) -> None:
+    """A stream with no shown samples is rejected before writing."""
+    sensors = sample_sensors()
+    streams = sample_streams(sensors)
+    t0 = float(sensors["cam"].metadata.timestamps[0])
+    streams["late"] = Stream.from_sensor(
+        SyntheticSensor(t0 + 100 + np.arange(5.0)),
+        lambda i: render_pattern(i, 128, 64))
+    with pytest.raises(ValueError, match="No samples"):
+        BundleWriter(tmp_path, streams, sample_sync(),
                      recording_id="drive_0423_a", timecode_origin=ORIGIN,
-                     processes=processes)
+                     start=t0, end=t0 + 2).write()
+    assert not (tmp_path / "streams").exists()
+
+
+def test_span_and_duration(tmp_path: Path) -> None:
+    """`overlap` ends at the earliest last sample; `duration` caps the end."""
+    sensors = sample_sensors()
+    first = min(float(s.metadata.timestamps[0]) for s in sensors.values())
+    last = min(float(s.metadata.timestamps[-1]) for s in sensors.values())
+
+    def frame_count(start: float, end: float) -> int:
+        return math.ceil(end * 30) - math.floor(start * 30) + 1
+
+    manifest, *_ = write_sample(tmp_path / "overlap", span="overlap")
+    assert manifest.frame_count == frame_count(first, last)
+    manifest, *_ = write_sample(tmp_path / "duration", duration=1.0)
+    assert manifest.frame_count == frame_count(first, first + 1.0)
+
+
+def test_timestamp_origin(tmp_path: Path) -> None:
+    """A timestamp origin is rounded down to a whole second."""
+    manifest, *_ = write_sample(
+        tmp_path, timecode_origin=ORIGIN.timestamp() + 0.75)
+    assert manifest.timecode_origin == ORIGIN
 
 
 @pytest.mark.parametrize("bad", [
@@ -273,5 +324,7 @@ def test_bad_overlay(tmp_path: Path, bad: dict) -> None:
         sensors["cam"], lambda i: render_pattern(i, 128, 64, True),
         profile=Profile.from_name("prores-4444"), **bad)
     with pytest.raises(ValueError):
-        write_bundle(tmp_path, streams, sample_sync(),
-                     recording_id="drive_0423_a", timecode_origin=ORIGIN)
+        BundleWriter(
+            tmp_path, streams, sample_sync(),
+            recording_id="drive_0423_a", timecode_origin=ORIGIN,
+        ).write()

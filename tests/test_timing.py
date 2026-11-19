@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from multireel.bundle.timing import Timecode
+from multireel.bundle import Timecode
 
 ORIGIN = datetime(2026, 11, 18, 16, 0, 0, tzinfo=UTC)
 

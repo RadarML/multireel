@@ -10,19 +10,18 @@ import numpy as np
 import pytest
 from synthetic import ORIGIN, sample_sensors, sample_streams, sample_sync
 
-from multireel import Manifest, write_bundle
-from multireel.validate import validate_stream
-from multireel.validate.checks import check_stream
-from multireel.validate.probe import StreamProbe, probe
+from multireel import BundleWriter, Manifest
+from multireel.write import StreamProbe, check_stream, validate_stream
+from multireel.write.validate import probe
 
 
 @pytest.fixture(scope="module")
 def bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A valid sample bundle, shared by every test in this module."""
     path = tmp_path_factory.mktemp("bundle")
-    write_bundle(
+    BundleWriter(
         path, sample_streams(sample_sensors()), sample_sync(),
-        recording_id="drive_0423_a", timecode_origin=ORIGIN)
+        recording_id="drive_0423_a", timecode_origin=ORIGIN).write()
     return path
 
 

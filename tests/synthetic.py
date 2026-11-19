@@ -17,12 +17,11 @@ from abstract_dataloader import abstract
 from abstract_dataloader.generic import Nearest
 from jaxtyping import Float64, UInt8
 
-from multireel import Manifest, Profile, Stream
+from multireel import FRAME_CLOCK, Manifest, Profile, Stream
 
 ORIGIN = datetime(2026, 11, 18, 16, 0, 0, tzinfo=UTC)
 """Timecode origin of the sample bundles."""
 
-CLOCK = "__multireel_frame_clock__"
 
 BLOCK = 8
 
@@ -156,7 +155,7 @@ def sample_streams(
 
 def sample_sync() -> Nearest:
     """Nearest-sample synchronization to the frame clock."""
-    return Nearest(CLOCK, tol=0.06)
+    return Nearest(FRAME_CLOCK, tol=0.06)
 
 
 def expected_samples(
@@ -166,12 +165,12 @@ def expected_samples(
     first = manifest.start_timecode.to_frame(manifest.timecode_origin)
     clock = (first + np.arange(manifest.frame_count)) / manifest.edit_rate
     synced = sample_sync()({
-        CLOCK: clock,
+        FRAME_CLOCK: clock,
         **{k: s.metadata.timestamps for k, s in sensors.items()}})
     expected: dict[str, list[int | None]] = {}
     for stream_id in sensors:
         shown: list[int | None] = [None] * manifest.frame_count
-        for frame, sample in zip(synced[CLOCK], synced[stream_id]):
+        for frame, sample in zip(synced[FRAME_CLOCK], synced[stream_id]):
             shown[int(frame)] = int(sample)
         expected[stream_id] = shown
     return expected

@@ -10,11 +10,13 @@ MODULES = [
     "multireel.bundle.manifest",
     "multireel.bundle.timing",
     "multireel.bundle.video",
-    "multireel.encode",
-    "multireel.validate",
-    "multireel.validate.checks",
-    "multireel.validate.probe",
+    "multireel.progress",
+    "multireel.render",
+    "multireel.stream",
     "multireel.write",
+    "multireel.write.encode",
+    "multireel.write.validate",
+    "multireel.write.writer",
 ]
 
 

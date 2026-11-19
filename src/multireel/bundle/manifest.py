@@ -1,6 +1,7 @@
 """Manifest: the `manifest.yaml` schema, and stream file paths and names."""
 
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -50,6 +51,11 @@ class Manifest:
             lowercase letters, digits, `_` and `-`.
         provenance: free-form value, stored unchanged.
         schema_version: `"major.minor"` schema version.
+
+    Raises:
+        ValueError: if a stream ID is invalid, an overlay does not link to a
+            stream that is not itself an overlay, or the edit rate is not
+            allowed.
     """
 
     bundle_id: UUID
@@ -62,6 +68,21 @@ class Manifest:
     streams: Mapping[str, StreamEntry]
     provenance: Any = None
     schema_version: str = "1.0"
+
+    def __post_init__(self) -> None:
+        """Check the stream IDs, overlay links and edit rate."""
+        if self.edit_rate not in (10, 15, 24, 25, 30, 50, 60):
+            raise ValueError(f"Edit rate {self.edit_rate} is not allowed.")
+        for stream_id, entry in self.streams.items():
+            if re.fullmatch(r"[a-z0-9_-]+", stream_id) is None:
+                raise ValueError(f"Invalid stream ID: {stream_id!r}")
+            base = entry.overlay_of
+            if base is not None and (
+                    base not in self.streams
+                    or self.streams[base].overlay_of is not None):
+                raise ValueError(
+                    f"Stream {stream_id!r} is an overlay of {base!r}, which "
+                    f"is not a stream or is itself an overlay.")
 
     @staticmethod
     def stream_path(bundle: Path, stream_id: str) -> Path:
