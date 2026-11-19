@@ -7,6 +7,7 @@ Multireel is a multimodal rendering framework for video editing. The project is 
 - `src/multireel/`: the library (src layout, built with hatchling; ships `py.typed`).
 - `tests/`: pytest tests (`test_*.py`).
 - `docs/`: [zensical](https://zensical.org) site (configured via `mkdocs.yml`); the API reference is generated from docstrings via mkdocstrings (`docs/api.md`). Add new pages to `nav` in `mkdocs.yml`.
+- `docs/spec.md`: the bundle format spec (video format, time model, manifest). Code that reads or writes bundles must follow it.
 
 ## Conventions
 
