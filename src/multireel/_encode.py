@@ -15,7 +15,8 @@ from typing import Literal, Self
 import numpy as np
 from jaxtyping import UInt8
 
-from multireel.bundle import Manifest, Profile
+from ._manifest import Manifest
+from ._profile import Profile
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class EncodeOptions:
     hevc_encoder: Literal["libx265", "hevc_nvenc"] = "libx265"
     quality: int = 20
 
-    def codec_args(
+    def _codec_args(
         self, profile: Profile, keyframe_interval: int
     ) -> tuple[str, str, list[str]]:
         """Return the `ffmpeg` encoder, pixel format and arguments.
@@ -127,7 +128,7 @@ class Encoder:
         self.channels = 4 if profile.alpha else 3
         self.shape = (height, width, self.channels)
 
-        name, pix_fmt, codec = options.codec_args(
+        name, pix_fmt, codec = options._codec_args(
             profile, manifest.keyframe_interval)
         in_pix_fmt = channel_order + ("a" if self.channels == 4 else "24")
         version = _ffmpeg_version(options.ffmpeg)

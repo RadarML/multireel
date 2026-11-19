@@ -29,10 +29,11 @@ from multireel import (
     EncodeOptions,
     Manifest,
     Profile,
+    ProfileName,
     Stream,
+    _validate,
+    validate_stream,
 )
-from multireel.bundle import ProfileName
-from multireel.write import validate, validate_stream
 
 
 def write_sample(
@@ -206,7 +207,7 @@ def test_verify_decode(
 ) -> None:
     """Without `decode`, stream validation does not decode frames."""
     manifest, _, _ = write_sample(tmp_path)
-    monkeypatch.setattr(validate, "decode_errors", lambda *a, **k: ["broken"])
+    monkeypatch.setattr(_validate, "decode_errors", lambda *a, **k: ["broken"])
     file = Manifest.stream_path(tmp_path, "cam")
     assert validate_stream(file, "cam", manifest) == ["decode: broken"]
     assert validate_stream(file, "cam", manifest, decode=False) == []

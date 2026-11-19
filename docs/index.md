@@ -37,12 +37,6 @@
     uv run pre-commit install
     ```
 
-??? info "Extras"
-
-    - `multireel[docs]`: a [zensical](https://zensical.org) + mkdocstrings-python documentation stack.
-    - `multireel[dev]`: linters, testing, pre-commit hooks, etc.
-
-
 ## Development Environment
 
 !!! info "`multireel` uses `uv`"

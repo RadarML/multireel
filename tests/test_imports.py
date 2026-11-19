@@ -6,17 +6,8 @@ import pytest
 
 MODULES = [
     "multireel",
-    "multireel.bundle",
-    "multireel.bundle.manifest",
-    "multireel.bundle.timing",
-    "multireel.bundle.video",
     "multireel.progress",
     "multireel.render",
-    "multireel.stream",
-    "multireel.write",
-    "multireel.write.encode",
-    "multireel.write.validate",
-    "multireel.write.writer",
 ]
 
 

@@ -9,7 +9,7 @@ import pytest
 import yaml
 from synthetic import ORIGIN
 
-from multireel.bundle import Manifest, Profile, StreamEntry, Timecode
+from multireel import Manifest, Profile, StreamEntry, Timecode
 
 
 def make_manifest(**kwargs: Any) -> Manifest:

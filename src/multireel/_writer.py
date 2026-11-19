@@ -11,21 +11,18 @@ from contextlib import ExitStack
 from datetime import UTC, datetime
 from multiprocessing.connection import Connection, wait
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 from uuid import uuid4
 
 import numpy as np
 from abstract_dataloader import spec
 from jaxtyping import Int64
 
-from multireel.bundle import Manifest, StreamEntry, Timecode
-from multireel.stream import Stream
-
-from .encode import EncodeOptions, Encoder
-from .validate import validate_stream
-
-FRAME_CLOCK = "__multireel_frame_clock__"
-"""Key of the frame times in the synchronization's input."""
+from ._encode import EncodeOptions, Encoder
+from ._manifest import Manifest, StreamEntry
+from ._stream import Stream
+from ._timecode import Timecode
+from ._validate import validate_stream
 
 
 class BundleWriter:
@@ -36,11 +33,17 @@ class BundleWriter:
 
     ```python
     writer = BundleWriter(
-        "out/drive_0423_a", streams, Nearest(FRAME_CLOCK, tol=0.05),
+        "out/drive_0423_a", streams,
+        Nearest(BundleWriter.FRAME_CLOCK, tol=0.05),
         recording_id="drive_0423_a", timecode_origin=first_sample_time)
     print(writer.manifest.frame_count)
     writer.write()
     ```
+
+    **Synchronization.** `sync` chooses the sample shown in each frame. It
+    receives the timestamps of each stream, and the frame times under the
+    key [`FRAME_CLOCK`][.FRAME_CLOCK]. Frames that it drops show no data in
+    every stream. Each shown sample is rendered once.
 
     **Frame range.** By default (`span="all"`), the bundle covers every
     sample of every stream. With `span="overlap"`, it only covers the time
@@ -71,17 +74,15 @@ class BundleWriter:
         verify_decode: decode every frame to check the files. This is slow.
 
     Attributes:
-        path: bundle directory.
-        streams: output streams, by stream ID.
-        options: encoder settings.
-        verify_decode: whether every frame is decoded to check the files.
         manifest: the bundle's manifest.
-        shown: sample shown in each frame of each stream, or `-1` for none.
 
     Raises:
         ValueError: if an argument, a stream or the synchronization result is
             invalid, or the encoder does not support a stream's profile.
     """
+
+    FRAME_CLOCK: Final = "__multireel_frame_clock__"
+    """Key of the frame times in the synchronization's input."""
 
     def __init__(
         self,
@@ -139,13 +140,13 @@ class BundleWriter:
                 for stream_id, s in streams.items()},
             provenance=provenance)
         for s in streams.values():
-            options.codec_args(s.profile, self.manifest.keyframe_interval)
+            options._codec_args(s.profile, self.manifest.keyframe_interval)
 
         clock = (first_frame + np.arange(frame_count)) / edit_rate
         synced = sync({
-            FRAME_CLOCK: clock,
+            self.FRAME_CLOCK: clock,
             **{stream_id: s.timestamps for stream_id, s in streams.items()}})
-        kept = synced[FRAME_CLOCK].astype(np.int64)
+        kept = synced[self.FRAME_CLOCK].astype(np.int64)
         self.shown: dict[str, Int64[np.ndarray, "F"]] = {}
         for stream_id in streams:
             sample_indices = synced[stream_id].astype(np.int64)
@@ -181,7 +182,7 @@ class BundleWriter:
             Streams do not need to be picklable. However, a forked process
             only keeps the thread that forked it, so locks held by other
             threads stay locked. Start threads and GPU contexts inside
-            `Stream.frames`, as the [`Stream`][multireel.stream.Stream]
+            `Stream.frames`, as the [`Stream`][multireel.Stream]
             constructors do, not before calling `write`.
 
         Args:

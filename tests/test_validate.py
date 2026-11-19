@@ -10,9 +10,8 @@ import numpy as np
 import pytest
 from synthetic import ORIGIN, sample_sensors, sample_streams, sample_sync
 
-from multireel import BundleWriter, Manifest
-from multireel.write import StreamProbe, check_stream, validate_stream
-from multireel.write.validate import probe
+from multireel import BundleWriter, Manifest, validate_stream
+from multireel._validate import StreamProbe, check_stream, probe
 
 
 @pytest.fixture(scope="module")

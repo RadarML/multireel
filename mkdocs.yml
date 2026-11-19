@@ -8,11 +8,9 @@ nav:
   - Home: index.md
   - Bundle Spec: spec.md
   - API:
-    - bundle: api/bundle.md
-    - stream: api/stream.md
-    - write: api/write.md
-    - render: api/render.md
-    - progress: api/progress.md
+    - multireel: api/multireel.md
+    - multireel.render: api/render.md
+    - multireel.progress: api/progress.md
 
 extra_css:
   - stylesheets/extra.css
@@ -61,9 +59,7 @@ plugins:
       - index.md: Project overview and installation
       - spec.md: Bundle file format spec
       "Development":
-      - api/bundle.md: Bundle format types and functions
-      - api/stream.md: Output streams and how their frames are rendered
-      - api/write.md: Writing bundles, from planning to encoding and validation
+      - api/multireel.md: Core API for writing bundles, and the bundle format types
       - api/render.md: Rendering arrays into RGB frames
       - api/progress.md: Rich progress bars for writing bundles
 - mkdocstrings:
@@ -85,6 +81,9 @@ plugins:
           show_root_toc_entry: true
           heading_level: 1
           members_order: source
+          # Hide private names and dunder methods; class docstrings say what
+          # callers need to know about the latter.
+          filters: ["!^_"]
           check_crossrefs_exclude:
           - "^numpy\\.(.*)"
         inventories:

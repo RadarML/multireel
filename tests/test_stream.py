@@ -9,7 +9,7 @@ from jaxtyping import UInt8
 from synthetic import SyntheticSensor
 
 from multireel import Stream
-from multireel.stream import _ordered_map
+from multireel._stream import _ordered_map
 
 
 def tag(i: int) -> UInt8[np.ndarray, "1 1 3"]:

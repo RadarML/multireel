@@ -24,7 +24,7 @@ import numpy as np
 from abstract_dataloader import spec
 from jaxtyping import Float64, Int64, UInt8
 
-from .bundle import Profile
+from ._profile import Profile
 
 T = TypeVar("T")
 R = TypeVar("R")

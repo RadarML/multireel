@@ -12,8 +12,8 @@ from uuid import UUID
 
 import yaml
 
-from .timing import Timecode
-from .video import Profile
+from ._profile import Profile
+from ._timecode import Timecode
 
 
 @dataclass(frozen=True)

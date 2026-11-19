@@ -1,9 +1,8 @@
 """Checking stream files against the bundle spec.
 
-[`validate_stream`][.validate_stream] reads a file's properties with
-[`probe`][.probe], checks them with [`check_stream`][.check_stream], and
-decodes every frame with [`decode_errors`][.decode_errors]. Each failed check
-is reported as a `"<rule>: <message>"` string.
+`validate_stream` reads a file's properties with `probe`, checks them with
+`check_stream`, and decodes every frame with `decode_errors`. Each failed
+check is reported as a `"<rule>: <message>"` string.
 """
 
 import json
@@ -18,7 +17,7 @@ from typing import Any
 import numpy as np
 from jaxtyping import Bool, Int64
 
-from multireel.bundle import Manifest
+from ._manifest import Manifest
 
 
 @dataclass(frozen=True)
@@ -190,7 +189,7 @@ def decode_errors(path: Path, ffmpeg: str = "ffmpeg") -> list[str]:
     return [line for line in out.stderr.splitlines() if line.strip()]
 
 
-PRORES_TAGS = {
+_PRORES_TAGS = {
     "proxy": "apco", "lt": "apcs", "standard": "apcn", "hq": "apch",
     "4444": "ap4h", "4444xq": "ap4x"}
 """QuickTime sample entry of each ProRes level."""
@@ -224,7 +223,7 @@ def check_stream(
         fail("profile", f"{probe.codec} {fmt} does not match {profile}.")
     if profile.codec == "prores" and profile.level is not None:
         tag = next((t for k, t in probe.tracks if k == "video"), None)
-        if tag != PRORES_TAGS.get(profile.level):
+        if tag != _PRORES_TAGS.get(profile.level):
             fail("profile",
                  f"ProRes sample entry {tag} is not level {profile.level}.")
 

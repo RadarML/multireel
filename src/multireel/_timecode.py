@@ -13,6 +13,9 @@ from datetime import datetime
 class Timecode:
     """Non-drop-frame timecode at a given edit rate.
 
+    `str()` formats it as `"HH:MM:SS:FF"`, and [`parse`][.parse] reads it
+    back.
+
     Attributes:
         hours: hours, `0` to `23`.
         minutes: minutes, `0` to `59`.

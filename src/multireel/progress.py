@@ -40,7 +40,7 @@ class RichProgress:
     """Rich progress bars, one per stream.
 
     Use as a context manager, and pass it to
-    [`BundleWriter.write`][multireel.write.BundleWriter.write]:
+    [`BundleWriter.write`][multireel.BundleWriter.write]:
 
     ```python
     with RichProgress() as progress:
