@@ -25,16 +25,14 @@ from .encode import EncodeOptions, Encoder
 from .validate import validate_stream
 
 FRAME_CLOCK = "__multireel_frame_clock__"
-"""Key of the bundle's frame instants in the synchronization's input."""
+"""Key of the frame times in the synchronization's input."""
 
 
 class BundleWriter:
-    """A planned bundle, ready to be written.
+    """A planned bundle, ready to write.
 
-    Constructing a writer checks every argument, each stream's profile and
-    the synchronization, and plans the bundle: its frame range, its
-    manifest, and the sample each frame of each stream shows. Nothing is
-    rendered or written until [`write`][.write]:
+    Creating a writer checks every argument and plans the bundle, but does
+    not render anything. Call [`write`][.write] to write it:
 
     ```python
     writer = BundleWriter(
@@ -44,53 +42,45 @@ class BundleWriter:
     writer.write()
     ```
 
+    **Frame range.** By default (`span="all"`), the bundle covers every
+    sample of every stream. With `span="overlap"`, it only covers the time
+    when every stream has samples. `start` and `end` replace either end of
+    the range, and `duration` limits its length.
+
+    **Timecode origin.** The origin is the time shown as `01:00:00:00`. All
+    bundles of a recording should use the same origin, such as the time of
+    its first sample. A timestamp is rounded down to a whole second.
+
     Args:
         path: bundle directory to create.
-        streams: output streams, keyed by stream ID.
-        sync: chooses the sample each frame shows. The frame clock is keyed
-            by [`FRAME_CLOCK`][multireel.write.FRAME_CLOCK]. For each
-            stream, the sample indices it returns must not decrease from one
-            frame to the next.
+        streams: output streams, by stream ID.
+        sync: chooses the sample shown in each frame. Sample indices must
+            not decrease.
         recording_id: ID of the source recording.
-        timecode_origin: time shown as timecode `01:00:00:00`: a
-            timezone-aware `datetime` that is a whole number of seconds, or
-            a timestamp in seconds since the UTC epoch, rounded down to a
-            whole second. Bundles of the same recording must share an
-            origin, so use a time that depends only on the recording, such
-            as its first sample.
-        start: range start, in seconds since the UTC epoch, rounded down to
-            a frame. Defaults to the start of `span`.
-        end: range end, in seconds since the UTC epoch, rounded up to a
-            frame. Defaults to the end of `span`.
-        span: default range: `all`, from the first sample of any stream to
-            the last sample of any stream, or `overlap`, where every stream
-            has samples.
-        duration: if set, the range ends at most this many seconds after
-            its start.
+        timecode_origin: time shown as `01:00:00:00`, as a timezone-aware
+            `datetime` or a timestamp.
+        start: start time, in seconds since the UTC epoch.
+        end: end time, in seconds since the UTC epoch.
+        span: default frame range, `all` or `overlap`.
+        duration: maximum length, in seconds.
         edit_rate: frames per second.
-        keyframe_interval: keyframe interval `N`, in frames. Defaults to
-            half a second of frames.
-        provenance: free-form value stored in the manifest.
+        keyframe_interval: number of frames between keyframes. Defaults to
+            half a second.
+        provenance: any extra information to store in the manifest.
         options: encoder settings.
-        verify_decode: decode every frame of each stream file when
-            validating it. This is the slowest check, and can take a large
-            share of the total time for long, high-resolution streams.
-            Without it, the `decode` rule is not checked.
+        verify_decode: decode every frame to check the files. This is slow.
 
     Attributes:
         path: bundle directory.
-        streams: output streams, keyed by stream ID.
+        streams: output streams, by stream ID.
         options: encoder settings.
-        verify_decode: whether every frame is decoded when validating.
-        manifest: the manifest the bundle will have.
-        shown: sample shown in each frame of each stream, or `-1` for a
-            no-data frame.
+        verify_decode: whether every frame is decoded to check the files.
+        manifest: the bundle's manifest.
+        shown: sample shown in each frame of each stream, or `-1` for none.
 
     Raises:
-        ValueError: if an argument or stream is invalid, the range is empty
-            or does not fit in valid timecode, a stream's synchronization
-            returns decreasing sample indices or shows none of its samples,
-            or the encoder cannot produce a stream's profile.
+        ValueError: if an argument, a stream or the synchronization result is
+            invalid, or the encoder does not support a stream's profile.
     """
 
     def __init__(
@@ -176,44 +166,37 @@ class BundleWriter:
         progress: Callable[[Mapping[str, int], int], None] | None = None,
         progress_interval: float = 0.2,
     ) -> Manifest:
-        """Render, encode and validate every stream, then write the manifest.
+        """Write every stream, then the manifest.
 
-        Each stream is written in its own forked process, feeding its own
-        `ffmpeg` process, and its file is validated before the manifest is
-        written. If anything fails, the other processes are stopped, and the
-        directory is left without a manifest.
+        Each stream is rendered, encoded and checked in its own forked
+        process. If a stream fails, the others are stopped and no manifest
+        is written.
 
-        !!! warning "Processes are forked"
+        `progress` receives the number of frames written so far for each
+        stream, and the total number of frames per stream. Validation is
+        not counted.
 
-            Each stream runs in a child process created with `fork`, so
-            streams do not need to be picklable. A child inherits only the
-            thread that forks it, and any lock another thread held at that
-            moment stays locked in the child. Start threads, thread pools
-            and GPU contexts inside `Stream.frames`, as the
-            [`Stream`][multireel.stream.Stream] constructors do, not before
-            calling `write`. A warning is issued if other threads are
-            running.
+        !!! warning "Streams are written in forked processes"
+
+            Streams do not need to be picklable. However, a forked process
+            only keeps the thread that forked it, so locks held by other
+            threads stay locked. Start threads and GPU contexts inside
+            `Stream.frames`, as the [`Stream`][multireel.stream.Stream]
+            constructors do, not before calling `write`.
 
         Args:
-            workers: number of streams written at once; defaults to all of
-                them.
-            progress: called every `progress_interval` seconds while streams
-                are written, and once more when they are all written, with
-                the frames written so far per stream and the number of
-                frames in every stream. Frames are counted when they are
-                handed to `ffmpeg`, so validation is not included.
+            workers: maximum number of streams written at once.
+            progress: called regularly with the progress so far.
             progress_interval: seconds between `progress` calls.
 
         Returns:
-            The manifest that was written.
+            The manifest.
 
         Raises:
-            FileExistsError: if `path` is already a bundle.
-            ValueError: if a stream renders no frames, or frames of the
-                wrong shape or type.
-            RuntimeError: if encoding fails, a stream file fails
-                validation, or a stream's process exits without reporting a
-                result.
+            FileExistsError: if the bundle already exists.
+            ValueError: if a stream's frames are missing or have the wrong
+                shape.
+            RuntimeError: if encoding or validation fails.
         """
         if (self.path / "manifest.yaml").exists():
             raise FileExistsError(f"{self.path} is already a bundle.")
@@ -285,11 +268,10 @@ class BundleWriter:
                 self.manifest.frame_count)
 
     def _child(self, stream_id: str, conn: Connection) -> None:
-        """Write one stream in a forked child, and report the result.
+        """Write one stream in a forked process, and send back the result.
 
-        Sends `None` on success, or the exception and its formatted
-        traceback. Exits with `os._exit`, so the child never runs the
-        parent's exit handlers or flushes buffers it inherited.
+        Sends `None`, or the exception and its traceback. Exits with
+        `os._exit`, so the parent's exit handlers do not run.
         """
         code = 0
         try:
@@ -321,11 +303,8 @@ class BundleWriter:
     def _encode(self, stream_id: str, file: Path) -> None:
         """Render and encode one stream.
 
-        Each shown sample is rendered once and written for as many frames
-        as it is shown; no-data frames are black. The frame size is that of
-        the first rendered frame. If anything fails, `ffmpeg` is stopped
-        without finalizing the file, and the stream's frame iterator is
-        closed, which stops its render threads.
+        Each shown sample is rendered once and repeated for as long as it is
+        shown. Frames with no data are black.
         """
         stream, shown = self.streams[stream_id], self.shown[stream_id]
         counter = list(self.streams).index(stream_id)

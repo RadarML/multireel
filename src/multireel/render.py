@@ -1,7 +1,7 @@
-"""Rendering helpers: turning arrays into 8-bit RGB frames.
+"""Helpers that turn arrays into RGB frames.
 
-Colormaps are given as a `(256, 3)` `uint8` lookup table, or by name, which
-needs the `matplotlib` extra:
+A colormap is a `(256, 3)` `uint8` lookup table, or a matplotlib colormap
+name. Names need the `matplotlib` extra:
 
 ```sh
 pip install multireel[matplotlib]
@@ -18,14 +18,13 @@ from jaxtyping import Bool, Float, Integer, UInt8
 def colormap(
     cmap: str | UInt8[np.ndarray, "256 3"],
 ) -> UInt8[np.ndarray, "256 3"]:
-    """Return a colormap as a lookup table.
+    """Return a colormap as a `(256, 3)` lookup table.
 
     Args:
-        cmap: a matplotlib colormap name, such as `turbo`, or a lookup
-            table, which is returned unchanged.
+        cmap: a matplotlib colormap name, or a lookup table.
 
     Raises:
-        ValueError: if a lookup table is not `(256, 3)` `uint8`.
+        ValueError: if the lookup table has the wrong shape or type.
         ImportError: if `cmap` is a name and matplotlib is not installed.
     """
     if isinstance(cmap, str):
@@ -59,21 +58,18 @@ def colorize(
     vmax: float = 1.0,
     valid: Bool[np.ndarray, "*shape"] | None = None,
 ) -> UInt8[np.ndarray, "*shape 3"]:
-    """Color values through a colormap.
+    """Color an array of values with a colormap.
 
-    Values from `vmin` to `vmax` span the colormap, and values outside are
-    clipped to its ends. Non-finite values, and values where `valid` is
-    false, are black.
+    Values from `vmin` to `vmax` map to the first to last colors, and values
+    outside this range are clipped. Values that are not finite, or where
+    `valid` is false, are black.
 
     Args:
         values: values to color.
-        cmap: a matplotlib colormap name, or a `(256, 3)` lookup table.
-        vmin: value shown as the first color.
-        vmax: value shown as the last color.
-        valid: which values to color; defaults to every finite value.
-
-    Returns:
-        An RGB image.
+        cmap: colormap name or lookup table.
+        vmin: value of the first color.
+        vmax: value of the last color.
+        valid: which values to color.
     """
     lut = colormap(cmap)
     scaled = (values - vmin) / (vmax - vmin) * 255
@@ -94,13 +90,11 @@ def colorize_labels(
 ) -> UInt8[np.ndarray, "*shape 3"]:
     """Color integer labels, such as semantic classes.
 
+    Label `i` gets `colors[i]`. Labels without a color are black.
+
     Args:
         labels: label of each pixel.
-        colors: RGB color of each label, from label `0`. Labels without a
-            color, including negative ones, are black.
-
-    Returns:
-        An RGB image.
+        colors: RGB color of each label.
     """
     palette = np.concatenate([
         np.asarray(colors, dtype=np.uint8).reshape(-1, 3),
@@ -112,13 +106,7 @@ def colorize_labels(
 def resize_nearest(
     image: UInt8[np.ndarray, "h w *c"], height: int, width: int
 ) -> UInt8[np.ndarray, "height width *c"]:
-    """Resize an image with nearest-neighbor sampling.
-
-    Each axis is resized separately. Integer scale factors use `np.repeat`,
-    and other factors gather whole rows or columns. Columns are resized
-    while the image has the fewer rows, since that axis is resized pixel by
-    pixel.
-    """
+    """Resize an image with nearest-neighbor sampling."""
 
     def resize_axis(x: np.ndarray, size: int, axis: int) -> np.ndarray:
         n = x.shape[axis]
@@ -128,6 +116,8 @@ def resize_nearest(
             return np.repeat(x, size // n, axis=axis)
         return np.take(x, np.arange(size) * n // size, axis=axis)
 
+    # Columns are gathered pixel by pixel, so resize them while the image
+    # has fewer rows.
     if height > image.shape[0]:
         return resize_axis(resize_axis(image, width, 1), height, 0)
     return resize_axis(resize_axis(image, height, 0), width, 1)

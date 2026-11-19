@@ -10,22 +10,23 @@ ProfileName = Literal[
     "prores-422-hq",
     "prores-4444",
 ]
-"""Name of a standard encoding profile."""
+"""Name of a standard profile."""
 
 
 @dataclass(frozen=True)
 class Profile:
-    """Codec properties of a stream: a standard profile, or a custom one.
+    """How a stream is encoded.
 
-    Use [`from_name`][.from_name] for the standard profiles in the spec.
+    Use [`from_name`][.from_name] for one of the spec's standard profiles, or
+    create a custom profile. ProRes profiles need a level: `proxy`, `lt`,
+    `standard`, `hq`, `4444` or `4444xq`.
 
     Attributes:
         codec: codec family.
         chroma: chroma subsampling.
-        bit_depth: bits per component, as decoded.
-        alpha: whether the stream carries an alpha channel.
-        level: ProRes profile, as named by `prores_ks`: `proxy`, `lt`,
-            `standard`, `hq`, `4444` or `4444xq`. Not used for HEVC.
+        bit_depth: bits per color channel.
+        alpha: whether the stream has an alpha channel.
+        level: ProRes level. Not used for HEVC.
     """
 
     codec: Literal["hevc", "prores"]
@@ -36,10 +37,10 @@ class Profile:
 
     @classmethod
     def from_name(cls, name: ProfileName) -> "Profile":
-        """Return a standard profile.
+        """Return the standard profile with this name.
 
         Raises:
-            ValueError: if `name` is not a standard profile.
+            ValueError: if there is no such profile.
         """
         try:
             return _STANDARD[name]
@@ -48,14 +49,14 @@ class Profile:
 
     @classmethod
     def from_manifest(cls, value: Any) -> "Profile":
-        """Read a profile from its manifest value.
+        """Read a profile from the manifest.
 
         Args:
-            value: a standard profile name, or a mapping of its fields.
+            value: a standard profile name, or a mapping of fields.
 
         Raises:
-            KeyError: if a mapping is missing a required field.
-            ValueError: if a name is not a standard profile.
+            KeyError: if a field is missing.
+            ValueError: if the name is unknown.
         """
         if isinstance(value, str):
             return cls.from_name(value)  # type: ignore
@@ -65,11 +66,10 @@ class Profile:
             level=value.get("level"))
 
     def to_manifest(self) -> str | dict[str, Any]:
-        """Return the manifest value of this profile.
+        """Return the profile as written in the manifest.
 
-        Returns:
-            The standard profile name, or a mapping of the fields if this
-                is a custom profile.
+        This is the standard profile name, or a mapping of fields for a
+        custom profile.
         """
         if self.name is not None:
             return self.name
@@ -82,7 +82,7 @@ class Profile:
 
     @property
     def name(self) -> ProfileName | None:
-        """Name of the matching standard profile, or `None` if custom."""
+        """Name of the matching standard profile, if any."""
         return next((n for n, p in _STANDARD.items() if p == self), None)
 
 

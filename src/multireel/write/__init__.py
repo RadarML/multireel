@@ -1,7 +1,7 @@
-"""Writing bundles from output streams.
+"""Writing bundles.
 
-A [`BundleWriter`][.BundleWriter] renders, encodes and validates a set of
-[`Stream`][multireel.stream.Stream]s, then writes the bundle's manifest:
+A [`BundleWriter`][.BundleWriter] writes a set of
+[`Stream`][multireel.stream.Stream]s as a bundle:
 
 ```python
 from abstract_dataloader.generic import Nearest
@@ -19,33 +19,18 @@ writer = BundleWriter(
 manifest = writer.write()
 ```
 
-A [`Synchronization`][abstract_dataloader.spec.Synchronization] decides which
-sample each frame shows. The writer calls it once, with the timestamps of
-every stream keyed by stream ID, plus the instants of the bundle's frames
-keyed by [`FRAME_CLOCK`][.FRAME_CLOCK]. The frame clock is usually the
-reference. Frames that the result leaves out are no-data frames in every
-stream.
+Writing has two steps:
 
-Only samples that are actually shown are rendered, and each one is rendered
-once, however many frames it is shown for.
+1. Creating a `BundleWriter` checks every argument and plans the bundle.
+    Nothing is rendered yet.
+2. [`write`][.BundleWriter.write] renders and encodes each stream, checks
+    each file with [`validate_stream`][.validate_stream], and writes the
+    manifest.
 
-Writing a bundle has two steps:
-
-- [`BundleWriter`][.BundleWriter] plans the bundle when constructed: it
-    picks the frame range, builds the manifest, and runs the
-    synchronization to choose the sample each frame shows, keyed by
-    [`FRAME_CLOCK`][.FRAME_CLOCK]. Every argument is checked here, before
-    anything is rendered.
-- [`BundleWriter.write`][.BundleWriter.write] writes each stream in its own
-    forked process: it renders the stream, encodes it with an
-    [`Encoder`][.Encoder] set up by [`EncodeOptions`][.EncodeOptions], and
-    checks the file with [`validate_stream`][.validate_stream]. It reports
-    progress as it goes.
-
-[`validate_stream`][.validate_stream] reads a file's properties into a
-[`StreamProbe`][.StreamProbe], checks them with
-[`check_stream`][.check_stream], and decodes every frame with
-[`decode_errors`][.decode_errors].
+The synchronization chooses the sample shown in each frame. It receives the
+timestamps of each stream, and the frame times under the key
+[`FRAME_CLOCK`][.FRAME_CLOCK]. Frames that it drops show no data in every
+stream. Each shown sample is rendered once.
 """
 
 from .encode import EncodeOptions, Encoder

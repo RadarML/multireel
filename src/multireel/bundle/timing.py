@@ -1,7 +1,7 @@
-"""Time model: frame grid and timecode.
+"""Frame timing and timecode.
 
-Frame indices are absolute, so frame `n` at edit rate `r` sits at `n/r`
-seconds since the UTC epoch.
+Frame indices are absolute: frame `n` at edit rate `r` is at `n / r` seconds
+since the UTC epoch.
 """
 
 import re
@@ -40,14 +40,13 @@ class Timecode:
     def from_frame(
         cls, frame: int, rate: int, origin: datetime
     ) -> "Timecode":
-        """Return the timecode of an absolute frame index.
+        """Return the timecode of a frame.
 
-        The timecode is `01:00:00:00` plus the time from `origin` to the
-        frame instant.
+        `origin` is shown as `01:00:00:00`.
 
         Raises:
-            ValueError: if the timecode would wrap, or `origin` is naive or
-                not a whole number of seconds.
+            ValueError: if the timecode would wrap past 24 hours, or `origin`
+                is not a timezone-aware whole second.
         """
         offset = frame - cls._origin_frame(origin, rate) + 3600 * rate
         if not 0 <= offset < 24 * 3600 * rate:
@@ -64,8 +63,7 @@ class Timecode:
         """Parse a `"HH:MM:SS:FF"` string.
 
         Raises:
-            ValueError: if `text` is not a valid non-drop-frame timecode at
-                `rate`.
+            ValueError: if `text` is not a valid timecode at `rate`.
         """
         match = re.fullmatch(r"(\d\d):(\d\d):(\d\d):(\d\d)", text)
         if match is None:
@@ -76,7 +74,7 @@ class Timecode:
         return cls(hours, minutes, seconds, frames, rate)
 
     def to_frame(self, origin: datetime) -> int:
-        """Return the absolute frame index of this timecode."""
+        """Return the frame index of this timecode."""
         offset = (
             ((self.hours * 60 + self.minutes) * 60 + self.seconds) * self.rate
             + self.frames)

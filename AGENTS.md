@@ -28,7 +28,7 @@ The library is Linux-only, since streams are written in forked processes. Encodi
 - **Typing**: all code is fully typed and must pass `pyright`. Use `jaxtyping` for array shapes when arrays are involved.
 - **Imports**: import from other packages with absolute imports of what they re-export (`from multireel.bundle import Manifest`), not from their modules. Inside a package, import sibling modules with relative imports (`from .timing import Timecode`), to avoid circular imports through the package's `__init__`.
 - **Linting**: `ruff` with an 80-character line limit and pydocstyle rules (see `pyproject.toml`).
-- **Docstrings**: Google style, since they are rendered by mkdocstrings. Every public module, class, and function needs one.
+- **Docstrings**: Google style, since they are rendered by mkdocstrings. Every public module, class, and function needs one. Write them in plain, direct language, and only include what callers need; implementation details go in code comments. Keep `Args` and `Attributes` entries short, and explain anything longer (such as modes or how arguments interact) in the main docstring.
 - **Dependencies**: managed with `uv`; commit `uv.lock`. Keep runtime dependencies minimal and put optional ones in an extra.
 
 ## Commands

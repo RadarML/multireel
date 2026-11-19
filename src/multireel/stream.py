@@ -1,20 +1,17 @@
-"""Output streams: timestamps, and how to render the frames of a stream.
+"""Output streams.
 
-A [`Stream`][.Stream] is a list of source timestamps and a function that
-yields the rendered frame of each requested sample, plus how to encode it.
-It can be made from:
+A [`Stream`][.Stream] holds source timestamps and a function that renders
+frames. Create one with:
 
-- [`random_access`][.Stream.random_access]: a function that loads one
-    sample by index, for sources that can seek cheaply.
-- [`sequential`][.Stream.sequential]: an iterable over every sample in
-    order, for sources that are slow to seek, such as video.
-- [`from_sensor`][.Stream.from_sensor]: an abstract dataloader
-    [`Sensor`][abstract_dataloader.spec.Sensor], using either of the above.
+- [`random_access`][.Stream.random_access]: load each sample by index. Use
+    this for sources that can seek quickly.
+- [`sequential`][.Stream.sequential]: read every sample in order. Use this
+    for sources that are slow to seek, such as video.
+- [`from_sensor`][.Stream.from_sensor]: read an abstract dataloader
+    [`Sensor`][abstract_dataloader.spec.Sensor], in either of the above ways.
 
-Each of these loads only the samples that are shown, and renders them in a
-pool of `workers` threads, keeping up to `2 * workers` samples ahead of the
-encoder. The pool is started when frames are first requested, so it is
-started inside the process that writes the stream.
+These only load the samples that are shown, and render them in `workers`
+threads.
 """
 
 from collections import deque
@@ -37,23 +34,21 @@ R = TypeVar("R")
 class Stream:
     """One output stream: its frames, and how to encode them.
 
+    `frames` is called with the indices of the samples to show, in
+    increasing order, and yields one frame per index. Frames are `uint8`
+    arrays of the same size. If the profile has alpha, it is the last
+    channel.
+
     Attributes:
-        timestamps: source timestamps, in float seconds since the UTC epoch,
-            strictly increasing.
-        frames: given strictly increasing sample indices, yields the
-            rendered frame of each of those samples, in order. It is called
-            once per bundle, so the same `Stream` can be written more than
-            once. Frames must be 8-bit and the same size for every sample,
-            with an alpha channel last if the profile has alpha.
-        profile: encoding profile; `hevc-main10-420` by default.
-        label: human-readable name, used in the manifest and clip name.
+        timestamps: source timestamps in increasing order, in seconds since
+            the UTC epoch.
+        frames: renders the frames of the given samples.
+        profile: encoding profile.
+        label: display name.
         overlay_of: base stream ID, for overlays.
-        alpha_mode: how the frames' alpha is stored, for overlays.
-        info: free-form mapping stored in the manifest.
-        channel_order: order of the color channels in frames, `rgb` or
-            `bgr`. Alpha, if any, always comes last. `bgr` suits sources
-            such as OpenCV, which decode to BGR, and saves reordering the
-            channels before encoding.
+        alpha_mode: how alpha is stored, for overlays.
+        info: any extra information to store in the manifest.
+        channel_order: color channel order. Use `bgr` for OpenCV images.
     """
 
     timestamps: Float64[np.ndarray, "N"]
@@ -79,18 +74,13 @@ class Stream:
     ) -> Self:
         """Make a stream that loads each shown sample by index.
 
-        Samples are loaded and rendered together in the worker threads.
-
         Args:
-            timestamps: source timestamps, one per sample index.
-            load: loads the sample at an index; must be thread-safe if
+            timestamps: source timestamps.
+            load: loads the sample at an index. Must be thread-safe if
                 `workers > 1`.
-            render: turns one sample into one frame.
+            render: turns a sample into a frame.
             workers: number of threads that load and render samples.
-            kwargs: other `Stream` fields, such as `profile`.
-
-        Returns:
-            The stream.
+            kwargs: other `Stream` fields.
         """
 
         def frames(
@@ -113,20 +103,16 @@ class Stream:
     ) -> Self:
         """Make a stream that reads every sample in order.
 
-        Samples are read in the stream's own thread, and only the shown ones
-        are rendered, in the worker threads. Reading stops after the last
-        shown sample. To overlap reading with rendering, `samples` should
-        prefetch.
+        Reading stops after the last shown sample, and only shown samples
+        are rendered. `samples` should prefetch, so that reading overlaps
+        with rendering.
 
         Args:
-            timestamps: source timestamps, one per sample of `samples()`.
-            samples: returns a new iterable over every sample, in order.
-            render: turns one sample into one frame.
+            timestamps: source timestamps.
+            samples: returns a new iterable over all samples.
+            render: turns a sample into a frame.
             workers: number of threads that render samples.
-            kwargs: other `Stream` fields, such as `profile`.
-
-        Returns:
-            The stream.
+            kwargs: other `Stream` fields.
         """
 
         def frames(
@@ -148,22 +134,16 @@ class Stream:
     ) -> Self:
         """Make a stream from an abstract dataloader sensor.
 
-        Timestamps come from `sensor.metadata.timestamps`. Samples are
-        loaded with `sensor[i]`, as in [`random_access`][^.], or, with
-        `sequential`, read in order from `sensor.stream()`, as in
-        [`sequential`][^.].
+        By default, samples are loaded by index with `sensor[i]`, as in
+        [`random_access`][^.]. With `sequential`, they are read in order from
+        `sensor.stream()`, as in [`sequential`][^.].
 
         Args:
             sensor: source sensor.
-            render: turns one sample into one frame.
-            sequential: read samples with `sensor.stream()` instead of
-                `sensor[i]`, for sensors that are slow to seek.
-            workers: number of threads that render samples, and, unless
-                `sequential`, load them.
-            kwargs: other `Stream` fields, such as `profile`.
-
-        Returns:
-            The stream.
+            render: turns a sample into a frame.
+            sequential: read samples in order instead of by index.
+            workers: number of worker threads.
+            kwargs: other `Stream` fields.
         """
         timestamps = sensor.metadata.timestamps
         if sequential:
@@ -177,7 +157,7 @@ class Stream:
 def _select(
     samples: Iterable[T], indices: Int64[np.ndarray, "K"]
 ) -> Iterator[T]:
-    """Yield the samples at strictly increasing `indices` of an iterable.
+    """Yield the samples at the given increasing indices.
 
     Stops reading `samples` after the last index.
     """
@@ -196,11 +176,10 @@ def _select(
 def _ordered_map(
     fn: Callable[[T], R], items: Iterable[T], workers: int
 ) -> Generator[R, None, None]:
-    """Apply `fn` to `items` in a thread pool, yielding results in order.
+    """Apply `fn` to `items` in a thread pool, and yield results in order.
 
-    Up to `2 * workers` items are processed ahead of the consumer. `items`
-    is consumed in the calling thread. If the consumer stops early, pending
-    items are cancelled, and running ones finish before this returns.
+    At most `2 * workers` items run ahead of the consumer. If the consumer
+    stops early, items that have not started are cancelled.
     """
     pending: deque[Future[R]] = deque()
     with ThreadPoolExecutor(workers) as pool:

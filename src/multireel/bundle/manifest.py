@@ -1,4 +1,4 @@
-"""Manifest: the `manifest.yaml` schema, and stream file paths and names."""
+"""The bundle manifest, `manifest.yaml`."""
 
 import os
 import re
@@ -22,10 +22,10 @@ class StreamEntry:
 
     Attributes:
         profile: encoding profile.
-        label: human-readable name for display.
-        overlay_of: base stream ID, for overlays only.
-        alpha_mode: how alpha is stored, for overlays only.
-        info: free-form mapping, stored unchanged.
+        label: display name.
+        overlay_of: base stream ID, for overlays.
+        alpha_mode: how alpha is stored, for overlays.
+        info: any extra information.
     """
 
     profile: Profile
@@ -39,23 +39,22 @@ class StreamEntry:
 class Manifest:
     """Contents of `manifest.yaml`.
 
+    Stream IDs may only use lowercase letters, digits, `_` and `-`.
+
     Attributes:
         bundle_id: unique ID of this bundle.
         recording_id: ID of the source recording.
-        timecode_origin: absolute UTC time shown as timecode `01:00:00:00`.
+        timecode_origin: UTC time shown as timecode `01:00:00:00`.
         edit_rate: frames per second.
-        keyframe_interval: keyframe interval `N`, in frames.
+        keyframe_interval: number of frames between keyframes.
         start_timecode: timecode of the first frame.
         frame_count: number of frames in every stream.
-        streams: stream entries, keyed by stream ID. Stream IDs use only
-            lowercase letters, digits, `_` and `-`.
-        provenance: free-form value, stored unchanged.
-        schema_version: `"major.minor"` schema version.
+        streams: stream entries, by stream ID.
+        provenance: any extra information.
+        schema_version: schema version, as `"major.minor"`.
 
     Raises:
-        ValueError: if a stream ID is invalid, an overlay does not link to a
-            stream that is not itself an overlay, or the edit rate is not
-            allowed.
+        ValueError: if a stream ID, overlay link or edit rate is invalid.
     """
 
     bundle_id: UUID
@@ -96,7 +95,7 @@ class Manifest:
     def clip_name(self, stream_id: str) -> str:
         """Return the clip name of a stream, `<recording_id> <label>`.
 
-        The stream ID is used in place of the label if there is none.
+        Streams without a label use their ID instead.
         """
         label = self.streams[stream_id].label
         return f"{self.recording_id} {label or stream_id}"
@@ -105,12 +104,11 @@ class Manifest:
     def read(cls, bundle: Path) -> "Manifest":
         """Read the manifest of a bundle.
 
-        Fields that this schema version does not know are ignored.
+        Unknown fields are ignored.
 
         Raises:
-            ValueError: if the major schema version is unknown, a required
-                field is missing, or a profile name is not a standard
-                profile.
+            ValueError: if the schema version is unsupported, or a field is
+                missing or invalid.
         """
         with open(bundle / "manifest.yaml", encoding="utf-8") as f:
             data = yaml.safe_load(f)
@@ -145,11 +143,10 @@ class Manifest:
             raise ValueError(f"Manifest is missing field {e}") from e
 
     def write(self, bundle: Path) -> None:
-        """Write this manifest to a bundle atomically.
+        """Write this manifest to a bundle.
 
-        The manifest is written to a temporary file in `bundle`, then renamed
-        to `manifest.yaml`. Strings that YAML could read as another type are
-        quoted.
+        The file is written to a temporary file first, then renamed, so it is
+        never left half-written.
         """
         streams: dict[str, Any] = {}
         for stream_id, entry in self.streams.items():

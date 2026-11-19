@@ -1,11 +1,9 @@
 """Checking stream files against the bundle spec.
 
-[`validate_stream`][.validate_stream] reads a stream file's properties with
-`ffprobe` into a [`StreamProbe`][.StreamProbe], checks them with
-[`check_stream`][.check_stream], and decodes every frame with
-[`decode_errors`][.decode_errors]. Each failed check is reported as a
-`"<rule>: <message>"` string. The checks only look at the probe, so they can
-be tested with crafted probes instead of crafted files.
+[`validate_stream`][.validate_stream] reads a file's properties with
+[`probe`][.probe], checks them with [`check_stream`][.check_stream], and
+decodes every frame with [`decode_errors`][.decode_errors]. Each failed check
+is reported as a `"<rule>: <message>"` string.
 """
 
 import json
@@ -27,13 +25,14 @@ from multireel.bundle import Manifest
 class Colr:
     """Contents of a QuickTime `colr` atom.
 
+    For each color code, `1` means BT.709.
+
     Attributes:
         type: `nclc` or `nclx`.
-        primaries: color primaries code; `1` is BT.709.
-        transfer: transfer function code; `1` is BT.709.
-        matrix: matrix code; `1` is BT.709.
-        full_range: the full-range flag of an `nclx` atom, or `None` for
-            `nclc`, which has no range flag.
+        primaries: color primaries code.
+        transfer: transfer function code.
+        matrix: matrix code.
+        full_range: full-range flag. Only `nclx` atoms have one.
     """
 
     type: str
@@ -45,33 +44,31 @@ class Colr:
 
 @dataclass(frozen=True)
 class StreamProbe:
-    """Properties of one stream file.
+    """Properties of one stream file, as read by `ffprobe`.
+
+    Fields that the file does not set are `None`.
 
     Attributes:
-        tracks: `(type, sample entry)` of each track, such as
-            `[("video", "hvc1"), ("data", "tmcd")]`.
-        codec: video codec name, such as `hevc` or `prores`.
-        pixel_format: decoded pixel format, such as `yuv420p10le`.
+        tracks: type and sample entry of each track, such as
+            `("video", "hvc1")`.
+        codec: video codec name.
+        pixel_format: decoded pixel format.
         width: frame width, in pixels.
         height: frame height, in pixels.
-        sample_aspect_ratio: pixel aspect ratio, such as `1:1`, or `None`
-            if unset.
-        field_order: `progressive`, an interlaced field order, or `None` if
-            unset.
-        rotation: display matrix rotation, in degrees.
-        frame_rate: video frame rate, such as `30/1`.
-        time_base: video track time base, such as `1/15360`.
-        color: color fields of the first decoded frame: `color_range`,
-            `color_primaries`, `color_transfer` and `color_space`.
-        colr: the `colr` atom, or `None` if absent.
-        timecode: start timecode of the `tmcd` track, or `None`.
-        reel_name: reel name of the `tmcd` track, or `None`.
+        sample_aspect_ratio: pixel aspect ratio.
+        field_order: field order, such as `progressive`.
+        rotation: display rotation, in degrees.
+        frame_rate: frame rate, such as `30/1`.
+        time_base: video track time base.
+        color: color fields of the first frame.
+        colr: the `colr` atom.
+        timecode: start timecode.
+        reel_name: reel name.
         tags: container metadata tags.
         durations: duration of each frame, in the time base.
         keyframes: whether each frame is a keyframe.
-        has_reordering: whether decode order differs from presentation
-            order, or the first frame is not presented at time zero, which
-            needs composition offsets or an edit list.
+        has_reordering: whether frames are reordered, or the first frame
+            does not start at time zero.
     """
 
     tracks: list[tuple[str, str]]
@@ -204,15 +201,10 @@ def check_stream(
 ) -> list[str]:
     """Check the properties of one stream file against the spec.
 
-    This covers every per-stream MUST except `decode`, which needs the file.
-    `no-b-frames` also covers closed GOPs: without reordering, no HEVC frame
-    can reference a frame before the keyframe that starts its GOP, and
-    ProRes is intra-only.
+    This checks every rule except `decode`, which needs the file itself.
 
     Returns:
-        One `"<rule>: <message>"` string per failed check, such as
-            `"hvc1-tag: HEVC sample entry is ['hev1']."`; empty if the
-            stream is valid.
+        One `"<rule>: <message>"` string per failed check.
     """
     violations: list[str] = []
 
@@ -251,6 +243,8 @@ def check_stream(
     if found_start != [start.hours, start.minutes, start.seconds,
                        start.frames]:
         fail("start-timecode", f"Starts at {probe.timecode}, not {start}.")
+    # Without reordering, GOPs are also closed: no HEVC frame can reference a
+    # frame before its GOP's keyframe, and ProRes is intra-only.
     if probe.has_reordering:
         fail("no-b-frames",
              "Frames are reordered, or the first frame is not at time 0.")
@@ -315,22 +309,18 @@ def validate_stream(
 ) -> list[str]:
     """Check one stream file against the spec and its manifest.
 
-    The manifest does not need to be written yet, so the writer can check
-    each stream before finalizing a bundle.
+    The manifest does not need to be written to disk yet.
 
     Args:
         path: stream file.
-        stream_id: ID of the stream in `manifest`.
-        manifest: manifest of the bundle the stream belongs to.
+        stream_id: ID of the stream.
+        manifest: bundle manifest.
         ffmpeg: `ffmpeg` executable.
         ffprobe: `ffprobe` executable.
-        decode: also decode every frame to check the `decode` rule. This
-            takes most of the time; without it, only the container, stream
-            and packet properties are checked.
+        decode: decode every frame. This is the slowest check.
 
     Returns:
-        One `"<rule>: <message>"` string per failed check, as in
-            [`check_stream`][^.]; empty if the stream is valid.
+        One `"<rule>: <message>"` string per failed check.
     """
     try:
         properties = probe(path, ffprobe)

@@ -1,4 +1,4 @@
-"""Progress bars for [`BundleWriter.write`][multireel.write.BundleWriter.write].
+"""Progress bars for writing bundles.
 
 Needs the `rich` extra:
 
@@ -27,7 +27,7 @@ from rich.text import Text
 
 
 class _RateColumn(ProgressColumn):
-    """Frames per second, from rich's moving speed estimate."""
+    """Frames per second."""
 
     def render(self, task: Task) -> Text:
         speed = task.finished_speed or task.speed
@@ -39,22 +39,22 @@ class _RateColumn(ProgressColumn):
 class RichProgress:
     """Rich progress bars, one per stream.
 
-    Use as a context manager, and pass it as `progress`:
+    Use as a context manager, and pass it to
+    [`BundleWriter.write`][multireel.write.BundleWriter.write]:
 
     ```python
     with RichProgress() as progress:
         writer.write(progress=progress)
     ```
 
-    Bars are redrawn on each callback instead of by rich's refresh thread,
-    because writing a bundle forks, and must not fork while other threads
-    are running.
-
     Args:
-        console: console to draw on; defaults to rich's global console.
+        console: console to draw on.
     """
 
     def __init__(self, console: Console | None = None) -> None:
+        # Bars are redrawn on each update instead of by rich's refresh
+        # thread, since writing a bundle forks and must not fork while other
+        # threads are running.
         self.progress = Progress(
             TextColumn("{task.description}"), BarColumn(),
             MofNCompleteColumn(), _RateColumn(), TimeElapsedColumn(),

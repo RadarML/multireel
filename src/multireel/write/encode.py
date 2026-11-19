@@ -1,13 +1,7 @@
-"""Encoding rendered frames into stream files with `ffmpeg`.
+"""Encoding stream files with `ffmpeg`.
 
-HEVC profiles use `libx265` or `hevc_nvenc`, and ProRes profiles use
-`prores_ks`. Frames are piped to an `ffmpeg` subprocess as raw 8-bit RGB(A)
-or BGR(A) video, and converted to BT.709 limited-range YUV by `ffmpeg`.
-
-The encoder name, version and settings are stored in the file's metadata
-under `multireel_encoder`, `multireel_encoder_version` and
-`multireel_encoder_settings`. The clip name is stored as `title`, and the
-reel name on the timecode track.
+HEVC profiles are encoded with `libx265` or `hevc_nvenc`, and ProRes profiles
+with `prores_ks`. Each file records its encoder and settings in its metadata.
 """
 
 import subprocess
@@ -26,15 +20,16 @@ from multireel.bundle import Manifest, Profile
 
 @dataclass(frozen=True)
 class EncodeOptions:
-    """Encoder settings shared by all streams in a bundle.
+    """Encoder settings for a bundle.
+
+    `quality` is the CRF for `libx265`, or the CQ for `hevc_nvenc`. ProRes
+    quality is set by the profile's level instead.
 
     Attributes:
         ffmpeg: `ffmpeg` executable.
-        ffprobe: `ffprobe` executable, used to validate each stream.
+        ffprobe: `ffprobe` executable.
         hevc_encoder: encoder for HEVC profiles.
-        quality: constant-quality level for HEVC profiles: CRF for
-            `libx265`, CQ for `hevc_nvenc`. Lower is better. ProRes quality
-            is set by the profile's `level`.
+        quality: HEVC quality level. Lower is better.
     """
 
     ffmpeg: str = "ffmpeg"
@@ -45,10 +40,10 @@ class EncodeOptions:
     def codec_args(
         self, profile: Profile, keyframe_interval: int
     ) -> tuple[str, str, list[str]]:
-        """Return the encoder name, input pixel format and arguments.
+        """Return the `ffmpeg` encoder, pixel format and arguments.
 
         Raises:
-            ValueError: if the encoder cannot produce the profile.
+            ValueError: if the profile is not supported.
         """
         n = str(keyframe_interval)
         q = str(self.quality)
@@ -104,27 +99,23 @@ def _ffmpeg_version(ffmpeg: str) -> str:
 
 
 class Encoder:
-    """Encodes the frames of one stream into one MOV file.
+    """Encodes frames into one stream file with `ffmpeg`.
 
-    Frames are written in presentation order. The profile, edit rate,
-    keyframe interval, start timecode, and reel and clip names come from the
-    manifest.
-
-    Use as a context manager: on leaving, the file is finalized with
-    [`close`][.close], or, if an exception was raised, `ffmpeg` is stopped with
-    [`abort`][.abort].
+    The encoding settings come from the manifest. Use the encoder as a
+    context manager. On exit, it finalizes the file with [`close`][.close],
+    or stops `ffmpeg` with [`abort`][.abort] if an exception was raised.
 
     Args:
-        path: output MOV file.
-        manifest: manifest of the bundle the stream belongs to.
-        stream_id: ID of the stream in `manifest`.
+        path: output file.
+        manifest: bundle manifest.
+        stream_id: ID of the stream.
         width: frame width, in pixels.
         height: frame height, in pixels.
         options: encoder settings.
-        channel_order: order of the color channels in input frames.
+        channel_order: color channel order of the frames.
 
     Raises:
-        ValueError: if the encoder cannot produce the stream's profile.
+        ValueError: if the stream's profile is not supported.
     """
 
     def __init__(
@@ -178,15 +169,11 @@ class Encoder:
             self.abort()
 
     def write(self, frame: UInt8[np.ndarray, "H W C"], count: int = 1) -> None:
-        """Write a frame, repeated `count` times.
-
-        Frames are 8-bit, in the stream's channel order, with alpha last
-        if the profile has alpha.
-
-        Repeats are how held samples and runs of no-data frames are written.
+        """Write a frame `count` times.
 
         Raises:
             ValueError: if the frame has the wrong shape or type.
+            RuntimeError: if `ffmpeg` fails.
         """
         if frame.shape != self.shape or frame.dtype != np.uint8:
             raise ValueError(

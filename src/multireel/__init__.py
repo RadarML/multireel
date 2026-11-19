@@ -1,14 +1,12 @@
-"""Multireel: a multimodal rendering framework for video editing.
+"""Multireel: render sensor data into video streams for a video editor.
 
-Multireel renders timestamped sensor data into bundles of video streams that
-line up with each other in a video editor.
+Multireel writes bundles: sets of video streams that line up in time.
 
-- [`bundle`][.bundle]: the bundle format as code.
-- [`stream`][.stream]: output streams, and how their frames are rendered.
-- [`write`][.write]: writing bundles from streams: planning, encoding with
-    `ffmpeg`, and checking stream files against the spec.
-- [`render`][.render]: turning arrays into RGB frames, with colormaps.
-- [`progress`][.progress]: rich progress bars for writing bundles.
+- [`bundle`][.bundle]: the bundle format.
+- [`stream`][.stream]: output streams and how their frames are rendered.
+- [`write`][.write]: writing bundles.
+- [`render`][.render]: helpers that turn arrays into RGB frames.
+- [`progress`][.progress]: progress bars for writing bundles.
 """
 
 from .bundle import Manifest, Profile
