@@ -122,7 +122,15 @@ Each bundle is described by a YAML file, `manifest.yaml`, at the bundle root. A 
 
 **Versioning.** `schema_version` is a quoted `"major.minor"` string. Adding optional fields bumps the minor version, and any other change bumps the major version. Readers MUST reject an unknown major version. Readers MUST accept a newer minor version and ignore any fields they do not recognize.
 
-**Completeness.** A directory is a bundle only if it contains `manifest.yaml`. The presence of `manifest.yaml` means that every stream file in the bundle is complete and conforms to this spec.
+**Completeness.** A directory is a bundle only if it contains `manifest.yaml`. The presence of `manifest.yaml` means that every stream file listed in the manifest is complete and conforms to this spec. Files and directories that the manifest does not refer to, such as a writer's temporary files, are not part of the bundle, and readers MUST ignore them.
+
+**Updating a bundle.** A writer MAY add, replace or remove streams of an existing bundle in place.
+
+- Every bundle field other than `streams` and `provenance` MUST stay the same, including `bundle_id`, which identifies the bundle, not a fixed set of streams.
+- A new or replaced stream file MUST be complete and conform to this spec before it is placed at `streams/<stream_id>.mov`. The manifest is then replaced atomically, and the files of removed streams are deleted after it.
+- Only one writer may update a bundle at a time.
+
+While a bundle is being updated, a reader may briefly see a replaced stream file under its previous manifest entry.
 
 ### Bundle fields
 

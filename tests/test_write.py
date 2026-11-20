@@ -54,11 +54,15 @@ def write_sample(
 
 def check_frames(
     path: Path, manifest: Manifest, sensors: dict[str, SyntheticSensor],
-    streams: dict[str, Stream],
+    streams: dict[str, Stream], gaps: bool = True,
 ) -> None:
-    """Every decoded frame shows the sample the synchronization chose."""
+    """Every decoded frame shows the sample the synchronization chose.
+
+    With `gaps`, also check that some frames show no data.
+    """
     expected = expected_samples(manifest, sensors)
-    assert any(None in shown for shown in expected.values())
+    if gaps:
+        assert any(None in shown for shown in expected.values())
     for stream_id, stream in streams.items():
         alpha = stream.profile.alpha
         first = next(stream.frames(np.array([0])))
@@ -233,6 +237,8 @@ def test_failed_render_leaves_no_manifest(tmp_path: Path) -> None:
             recording_id="drive_0423_a", timecode_origin=ORIGIN,
         ).write()
     assert not (tmp_path / "manifest.yaml").exists()
+    assert not list((tmp_path / "streams").iterdir())
+    assert not list(tmp_path.glob(".staging-*"))
 
 
 def test_process_exits_without_result(tmp_path: Path) -> None:
@@ -331,3 +337,165 @@ def test_bad_overlay(tmp_path: Path, bad: dict) -> None:
             tmp_path, streams, sample_sync(),
             recording_id="drive_0423_a", timecode_origin=ORIGIN,
         ).write()
+
+
+def snapshot(path: Path) -> dict[str, bytes]:
+    """The contents of every file in a bundle, by relative path."""
+    return {
+        str(f.relative_to(path)): f.read_bytes()
+        for f in sorted(path.rglob("*")) if f.is_file()}
+
+
+def without(files: dict[str, bytes], *names: str) -> dict[str, bytes]:
+    """`files` without the given relative paths."""
+    return {k: v for k, v in files.items() if k not in names}
+
+
+def pattern_stream(sensor: SyntheticSensor, **kwargs: Any) -> Stream:
+    """A 128 x 64 pattern stream of a sensor."""
+    return Stream.from_sensor(
+        sensor, lambda i: render_pattern(i, 128, 64), **kwargs)
+
+
+def test_update_add(tmp_path: Path) -> None:
+    """Adding a stream keeps the bundle and every other stream as they are."""
+    base, sensors, _ = write_sample(tmp_path, provenance={"run": 1})
+    before = snapshot(tmp_path)
+    new = {"lidar2": pattern_stream(sensors["lidar"])}
+    calls: list[dict[str, int]] = []
+    manifest = BundleWriter.update(tmp_path, new, sample_sync()).write(
+        progress=lambda done, total: calls.append(dict(done)))
+
+    assert manifest == Manifest.read(tmp_path)
+    assert replace(manifest, streams=base.streams) == base
+    assert list(manifest.streams) == [*base.streams, "lidar2"]
+    assert set(calls[-1]) == {"lidar2"}
+    after = snapshot(tmp_path)
+    assert without(after, "manifest.yaml", "streams/lidar2.mov") == without(
+        before, "manifest.yaml")
+    check_frames(tmp_path, manifest, {"lidar2": sensors["lidar"]}, new)
+
+
+def test_update_replace(tmp_path: Path) -> None:
+    """A replaced stream gets a new entry and file; overlays still link."""
+    base, sensors, _ = write_sample(tmp_path)
+    before = snapshot(tmp_path)
+    new = {"cam": pattern_stream(
+        sensors["thermal"], label="Camera v2",
+        profile=Profile.from_name("prores-422-lt"))}
+    manifest = BundleWriter.update(tmp_path, new, sample_sync()).write()
+
+    assert list(manifest.streams) == list(base.streams)
+    assert manifest.streams["cam"].label == "Camera v2"
+    assert manifest.streams["cam"].profile == Profile.from_name(
+        "prores-422-lt")
+    assert manifest.streams["boxes"].overlay_of == "cam"
+    after = snapshot(tmp_path)
+    assert after["streams/cam.mov"] != before["streams/cam.mov"]
+    assert without(after, "manifest.yaml", "streams/cam.mov") == without(
+        before, "manifest.yaml", "streams/cam.mov")
+    for stream_id in manifest.streams:
+        assert validate_stream(
+            Manifest.stream_path(tmp_path, stream_id), stream_id,
+            manifest) == []
+    check_frames(
+        tmp_path, manifest, {"cam": sensors["thermal"]}, new, gaps=False)
+
+
+def test_update_remove(tmp_path: Path) -> None:
+    """Removing a stream deletes its entry and file, and nothing else."""
+    base, *_ = write_sample(tmp_path)
+    before = snapshot(tmp_path)
+    manifest = BundleWriter.update(
+        tmp_path, {}, sample_sync(), remove=["radar"]).write()
+
+    assert list(manifest.streams) == [k for k in base.streams if k != "radar"]
+    assert Manifest.read(tmp_path) == manifest
+    assert without(snapshot(tmp_path), "manifest.yaml") == without(
+        before, "manifest.yaml", "streams/radar.mov")
+    assert {p.name for p in tmp_path.iterdir()} == {"manifest.yaml", "streams"}
+
+
+def test_update_remove_base(tmp_path: Path) -> None:
+    """A base stream can only be removed together with its overlays."""
+    write_sample(tmp_path)
+    with pytest.raises(ValueError, match="overlay"):
+        BundleWriter.update(tmp_path, {}, sample_sync(), remove=["cam"])
+    manifest = BundleWriter.update(
+        tmp_path, {}, sample_sync(), remove=["cam", "boxes"]).write()
+    assert set(manifest.streams) == {"radar", "lidar", "thermal"}
+
+
+@pytest.mark.parametrize("case", [
+    "unknown_remove", "written_and_removed", "decreasing", "profile",
+    "no_samples"])
+def test_update_bad_args(tmp_path: Path, case: str) -> None:
+    """Invalid updates are rejected before anything is written."""
+    _, sensors, _ = write_sample(tmp_path)
+    before = snapshot(tmp_path)
+    t0 = float(sensors["cam"].metadata.timestamps[0])
+    streams = {"new": pattern_stream(sensors["cam"])}
+    remove: list[str] = []
+    sync: Any = sample_sync()
+    match case:
+        case "unknown_remove":
+            remove = ["missing"]
+        case "written_and_removed":
+            streams["radar"] = streams.pop("new")
+            remove = ["radar"]
+        case "decreasing":
+            sync = lambda ts: {k: np.arange(4)[::-1] for k in ts}  # noqa: E731
+        case "profile":
+            streams["new"] = pattern_stream(
+                sensors["cam"],
+                profile=Profile("hevc", "420", 10, True))
+        case "no_samples":
+            streams["new"] = pattern_stream(
+                SyntheticSensor(t0 + 100 + np.arange(5.0)))
+    with pytest.raises(ValueError):
+        BundleWriter.update(tmp_path, streams, sync, remove=remove).write()
+    assert snapshot(tmp_path) == before
+    assert {p.name for p in tmp_path.iterdir()} == {"manifest.yaml", "streams"}
+
+
+def test_update_not_a_bundle(tmp_path: Path) -> None:
+    """Updating a directory without a manifest fails."""
+    with pytest.raises(FileNotFoundError):
+        BundleWriter.update(tmp_path, {}, sample_sync())
+
+
+def test_update_failure_leaves_bundle(tmp_path: Path) -> None:
+    """A failed update leaves every file of the bundle unchanged."""
+    _, sensors, _ = write_sample(tmp_path)
+    before = snapshot(tmp_path)
+
+    def broken(
+        indices: Int64[np.ndarray, "K"],
+    ) -> Iterator[UInt8[np.ndarray, "H W C"]]:
+        yield render_pattern(int(indices[0]), 128, 64)
+        raise RuntimeError("renderer crashed")
+
+    streams = {
+        "thermal": Stream(
+            sensors["thermal"].metadata.timestamps, broken,
+            profile=Profile.from_name("prores-422-lt")),
+        "lidar2": pattern_stream(sensors["lidar"]),
+    }
+    with pytest.raises(RuntimeError, match="renderer crashed"):
+        BundleWriter.update(tmp_path, streams, sample_sync()).write()
+    assert snapshot(tmp_path) == before
+    assert not list(tmp_path.glob(".staging-*"))
+
+
+def test_update_provenance(tmp_path: Path) -> None:
+    """Provenance is kept unless replaced; replacing it rewrites no stream."""
+    write_sample(tmp_path, provenance={"run": 1})
+    manifest = BundleWriter.update(
+        tmp_path, {}, sample_sync(), remove=["radar"]).write()
+    assert manifest.provenance == {"run": 1}
+    before = snapshot(tmp_path)
+    BundleWriter.update(
+        tmp_path, {}, sample_sync(), provenance={"run": 2}).write()
+    assert Manifest.read(tmp_path).provenance == {"run": 2}
+    assert without(snapshot(tmp_path), "manifest.yaml") == without(
+        before, "manifest.yaml")

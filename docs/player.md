@@ -37,7 +37,8 @@ Then open `http://localhost:8000` in a browser.
 
 The sidebar lists every bundle under `<folder>`. A bundle that is still being
 written has no `manifest.yaml` yet, so it doesn't appear until it is finished.
-Reload the page to see new bundles.
+Reload the page to see new bundles, and streams added to, replaced in or
+removed from a bundle.
 
 The page URL records the open bundle and frame, as `#<bundle>?f=<frame>`, so
 reloading the page or sharing its URL returns to the same place.

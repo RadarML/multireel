@@ -1,17 +1,20 @@
 """Planning and writing a bundle."""
 
+import dataclasses
 import math
 import multiprocessing
 import os
+import shutil
+import tempfile
 import threading
 import traceback
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from multiprocessing.connection import Connection, wait
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Self
 from uuid import uuid4
 
 import numpy as np
@@ -53,6 +56,16 @@ class BundleWriter:
     **Timecode origin.** The origin is the time shown as `01:00:00:00`. All
     bundles of a recording should use the same origin, such as the time of
     its first sample. A timestamp is rounded down to a whole second.
+
+    **Updating.** [`update`][.update] plans changes to an existing bundle
+    instead: it adds new streams, replaces streams with the same IDs, and
+    removes others, leaving the rest of the bundle as it is.
+
+    ```python
+    BundleWriter.update(
+        "out/drive_0423_a", {"front_cam": stream}, sync, remove=["old"],
+    ).write()
+    ```
 
     Args:
         path: bundle directory to create.
@@ -102,11 +115,6 @@ class BundleWriter:
         options: EncodeOptions = EncodeOptions(),
         verify_decode: bool = True,
     ) -> None:
-        self.path = Path(path)
-        self.streams = streams
-        self.options = options
-        self.verify_decode = verify_decode
-
         if isinstance(timecode_origin, (int, float)):
             timecode_origin = datetime.fromtimestamp(
                 math.floor(timecode_origin), tz=UTC)
@@ -125,7 +133,7 @@ class BundleWriter:
         frame_count = math.ceil(end * edit_rate) - first_frame + 1
         Timecode.from_frame(  # raises if the last frame's timecode would wrap
             first_frame + frame_count - 1, edit_rate, timecode_origin)
-        self.manifest = Manifest(
+        manifest = Manifest(
             bundle_id=uuid4(),
             recording_id=recording_id,
             timecode_origin=timecode_origin,
@@ -135,19 +143,107 @@ class BundleWriter:
                 first_frame, edit_rate, timecode_origin),
             frame_count=frame_count,
             streams={
-                stream_id: StreamEntry(
-                    s.profile, s.label, s.overlay_of, s.alpha_mode, s.info)
-                for stream_id, s in streams.items()},
+                stream_id: _entry(s) for stream_id, s in streams.items()},
             provenance=provenance)
-        for s in streams.values():
-            options._codec_args(s.profile, self.manifest.keyframe_interval)
+        self._plan(
+            Path(path), streams, sync, manifest, options, verify_decode,
+            remove=(), updating=False)
 
-        clock = (first_frame + np.arange(frame_count)) / edit_rate
+    @classmethod
+    def update(
+        cls,
+        path: str | Path,
+        streams: Mapping[str, Stream],
+        sync: spec.Synchronization,
+        *,
+        remove: Collection[str] = (),
+        provenance: Any = None,
+        options: EncodeOptions = EncodeOptions(),
+        verify_decode: bool = True,
+    ) -> Self:
+        """Plan changes to an existing bundle.
+
+        Streams with new IDs are added, and streams with existing IDs are
+        replaced, entry and file; other streams are kept as they are. The
+        frame range, edit rate, keyframe interval, timecode origin, recording
+        ID and bundle ID all come from the bundle.
+
+        `sync` receives only the streams being written, so the frames it
+        drops are chosen from those streams alone. A stream must show at
+        least one sample within the bundle's range, which cannot change.
+
+        !!! warning
+
+            Only one writer may update a bundle at a time. A base stream
+            replaced with different dimensions needs its overlays replaced or
+            removed as well.
+
+        Args:
+            path: existing bundle directory.
+            streams: streams to add or replace, by stream ID.
+            sync: chooses the sample shown in each frame.
+            remove: IDs of streams to remove.
+            provenance: replaces the bundle's provenance; `None` keeps it.
+            options: encoder settings.
+            verify_decode: decode every frame to check the files.
+
+        Returns:
+            A writer; call [`write`][^.write] to apply the changes.
+
+        Raises:
+            FileNotFoundError: if `path` is not a bundle.
+            ValueError: if an argument, a stream or the synchronization
+                result is invalid, a removed stream is missing or is also
+                written, or the encoder does not support a stream's profile.
+        """
+        path = Path(path)
+        base = Manifest.read(path)
+        if missing := set(remove) - set(base.streams):
+            raise ValueError(
+                f"Streams {sorted(missing)} are not in the bundle.")
+        if both := set(remove) & set(streams):
+            raise ValueError(
+                f"Streams {sorted(both)} are both written and removed.")
+        manifest = dataclasses.replace(
+            base,
+            streams={
+                **{k: v for k, v in base.streams.items() if k not in remove},
+                **{k: _entry(s) for k, s in streams.items()}},
+            provenance=base.provenance if provenance is None else provenance)
+        writer = cls.__new__(cls)
+        writer._plan(
+            path, streams, sync, manifest, options, verify_decode,
+            remove=remove, updating=True)
+        return writer
+
+    def _plan(
+        self, path: Path, streams: Mapping[str, Stream],
+        sync: spec.Synchronization, manifest: Manifest,
+        options: EncodeOptions, verify_decode: bool, remove: Collection[str],
+        updating: bool,
+    ) -> None:
+        """Choose the sample shown in each frame of each stream."""
+        self.path = path
+        self.streams = streams
+        self.manifest = manifest
+        self.options = options
+        self.verify_decode = verify_decode
+        self.remove = tuple(remove)
+        self.updating = updating
+        for s in streams.values():
+            options._codec_args(s.profile, manifest.keyframe_interval)
+
+        first_frame = manifest.start_timecode.to_frame(
+            manifest.timecode_origin)
+        frame_count = manifest.frame_count
+        self.shown: dict[str, Int64[np.ndarray, "F"]] = {}
+        if not streams:
+            return
+        clock = (first_frame + np.arange(frame_count)) / manifest.edit_rate
         synced = sync({
             self.FRAME_CLOCK: clock,
             **{stream_id: s.timestamps for stream_id, s in streams.items()}})
         kept = synced[self.FRAME_CLOCK].astype(np.int64)
-        self.shown: dict[str, Int64[np.ndarray, "F"]] = {}
         for stream_id in streams:
             sample_indices = synced[stream_id].astype(np.int64)
             if np.any(np.diff(sample_indices) < 0):
@@ -167,15 +263,18 @@ class BundleWriter:
         progress: Callable[[Mapping[str, int], int], None] | None = None,
         progress_interval: float = 0.2,
     ) -> Manifest:
-        """Write every stream, then the manifest.
+        """Write the planned streams, then the manifest.
 
         Each stream is rendered, encoded and checked in its own forked
-        process. If a stream fails, the others are stopped and no manifest
-        is written.
+        process, into a staging directory inside the bundle. Only once every
+        stream has passed are the files moved into `streams/` and the
+        manifest written; then the files of removed streams are deleted. If
+        a stream fails, the others are stopped and the bundle is left as it
+        was: no manifest for a new bundle, and no changes for an update.
 
         `progress` receives the number of frames written so far for each
-        stream, and the total number of frames per stream. Validation is
-        not counted.
+        stream being written, and the total number of frames per stream.
+        Validation is not counted.
 
         !!! warning "Streams are written in forked processes"
 
@@ -194,12 +293,12 @@ class BundleWriter:
             The manifest.
 
         Raises:
-            FileExistsError: if the bundle already exists.
+            FileExistsError: if a new bundle already exists.
             ValueError: if a stream's frames are missing or have the wrong
                 shape.
             RuntimeError: if encoding or validation fails.
         """
-        if (self.path / "manifest.yaml").exists():
+        if not self.updating and (self.path / "manifest.yaml").exists():
             raise FileExistsError(f"{self.path} is already a bundle.")
         if threading.active_count() > 1:
             warnings.warn(
@@ -211,6 +310,8 @@ class BundleWriter:
         # counts are visible to the parent.
         self._counts = multiprocessing.Array("q", len(self.streams), lock=False)
         (self.path / "streams").mkdir(parents=True, exist_ok=True)
+        # On the same file system as `streams/`, so moving files is atomic.
+        staging = Path(tempfile.mkdtemp(dir=self.path, prefix=".staging-"))
 
         ctx = multiprocessing.get_context("fork")
         queue = list(reversed(list(self.streams)))
@@ -221,7 +322,8 @@ class BundleWriter:
                     stream_id = queue.pop()
                     parent, child = ctx.Pipe(duplex=False)
                     process = ctx.Process(
-                        target=self._child, args=(stream_id, child),
+                        target=self._child,
+                        args=(stream_id, staging / f"{stream_id}.mov", child),
                         daemon=True)
                     process.start()
                     child.close()
@@ -247,6 +349,16 @@ class BundleWriter:
                         raise RuntimeError(
                             f"The process for stream {stream_id!r} exited "
                             f"with code {process.exitcode}.")
+
+            self._report(progress)
+            for stream_id in self.streams:
+                os.replace(
+                    staging / f"{stream_id}.mov",
+                    Manifest.stream_path(self.path, stream_id))
+            self.manifest.write(self.path)
+            for stream_id in self.remove:
+                Manifest.stream_path(self.path, stream_id).unlink(
+                    missing_ok=True)
         finally:
             # Only reached with children still running if something failed.
             for _, process, conn in running.values():
@@ -254,9 +366,9 @@ class BundleWriter:
             for _, process, conn in running.values():
                 process.join()
                 conn.close()
+            # A terminated child's ffmpeg may still be writing its file.
+            shutil.rmtree(staging, ignore_errors=True)
 
-        self._report(progress)
-        self.manifest.write(self.path)
         return self.manifest
 
     def _report(
@@ -268,7 +380,7 @@ class BundleWriter:
                 dict(zip(self.streams, self._counts)),
                 self.manifest.frame_count)
 
-    def _child(self, stream_id: str, conn: Connection) -> None:
+    def _child(self, stream_id: str, file: Path, conn: Connection) -> None:
         """Write one stream in a forked process, and send back the result.
 
         Sends `None`, or the exception and its traceback. Exits with
@@ -276,7 +388,7 @@ class BundleWriter:
         """
         code = 0
         try:
-            self._write_stream(stream_id)
+            self._write_stream(stream_id, file)
             conn.send(None)
         except BaseException as e:
             code = 1
@@ -289,9 +401,8 @@ class BundleWriter:
             conn.close()
             os._exit(code)
 
-    def _write_stream(self, stream_id: str) -> None:
-        """Render, encode and validate one stream."""
-        file = Manifest.stream_path(self.path, stream_id)
+    def _write_stream(self, stream_id: str, file: Path) -> None:
+        """Render, encode and validate one stream into `file`."""
         self._encode(stream_id, file)
         violations = validate_stream(
             file, stream_id, self.manifest, ffmpeg=self.options.ffmpeg,
@@ -337,3 +448,10 @@ class BundleWriter:
                         pending, current = None, sample
                     encoder.write(frame, int(length))
                 self._counts[counter] += int(length)
+
+
+def _entry(stream: Stream) -> StreamEntry:
+    """The manifest entry of a stream."""
+    return StreamEntry(
+        stream.profile, stream.label, stream.overlay_of, stream.alpha_mode,
+        stream.info)
