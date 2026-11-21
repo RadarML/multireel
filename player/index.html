@@ -194,6 +194,12 @@ function profileName(profile) {
     + (profile.alpha ? " alpha" : "");
 }
 
+// Profile of a stream, with its frame size once the video's metadata loads.
+function streamInfo(s) {
+  const size = s.width ? `${s.width}\u00d7${s.height} ` : "";
+  return size + profileName(s.profile);
+}
+
 function formatDuration(seconds) {
   const s = Math.floor(seconds);
   const h = Math.floor(s / 3600);
@@ -341,6 +347,9 @@ function buildTiles() {
     video.addEventListener("seeked", () => onSeeked(s));
     video.addEventListener("loadedmetadata", () => {
       s.loaded = true;
+      s.width = video.videoWidth;
+      s.height = video.videoHeight;
+      if (s.profileLabel) s.profileLabel.textContent = streamInfo(s);
       const aspect = video.videoWidth / video.videoHeight;
       if (aspect > 0 && aspect !== s.aspect) {
         s.aspect = aspect;
@@ -437,7 +446,8 @@ function buildStreamList() {
     name.textContent = s.label || s.id;
     const profile = document.createElement("span");
     profile.className = "profile";
-    profile.textContent = profileName(s.profile);
+    profile.textContent = streamInfo(s);
+    s.profileLabel = profile;
     label.append(box, name, profile);
     list.append(label);
   }
